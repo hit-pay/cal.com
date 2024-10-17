@@ -9,6 +9,7 @@ import around_config_json from "./around/config.json";
 import autocheckin_config_json from "./autocheckin/config.json";
 import baa_for_hipaa_config_json from "./baa-for-hipaa/config.json";
 import basecamp3_config_json from "./basecamp3/config.json";
+import bolna_config_json from "./bolna/config.json";
 import { metadata as caldavcalendar__metadata_ts } from "./caldavcalendar/_metadata";
 import campfire_config_json from "./campfire/config.json";
 import campsite_config_json from "./campsite/config.json";
@@ -32,6 +33,7 @@ import { metadata as giphy__metadata_ts } from "./giphy/_metadata";
 import { metadata as googlecalendar__metadata_ts } from "./googlecalendar/_metadata";
 import { metadata as googlevideo__metadata_ts } from "./googlevideo/_metadata";
 import gtm_config_json from "./gtm/config.json";
+import hitpay_config_json from "./hitpay/config.json";
 import horizon_workrooms_config_json from "./horizon-workrooms/config.json";
 import { metadata as hubspot__metadata_ts } from "./hubspot/_metadata";
 import { metadata as huddle01video__metadata_ts } from "./huddle01video/_metadata";
@@ -47,6 +49,7 @@ import metapixel_config_json from "./metapixel/config.json";
 import mirotalk_config_json from "./mirotalk/config.json";
 import mock_payment_app_config_json from "./mock-payment-app/config.json";
 import n8n_config_json from "./n8n/config.json";
+import nextcloudtalk_config_json from "./nextcloudtalk/config.json";
 import { metadata as office365calendar__metadata_ts } from "./office365calendar/_metadata";
 import office365video_config_json from "./office365video/config.json";
 import paypal_config_json from "./paypal/config.json";
@@ -57,6 +60,7 @@ import plausible_config_json from "./plausible/config.json";
 import posthog_config_json from "./posthog/config.json";
 import qr_code_config_json from "./qr_code/config.json";
 import raycast_config_json from "./raycast/config.json";
+import retell_ai_config_json from "./retell-ai/config.json";
 import riverside_config_json from "./riverside/config.json";
 import roam_config_json from "./roam/config.json";
 import routing_forms_config_json from "./routing-forms/config.json";
@@ -103,6 +107,7 @@ export const appStoreMetadata = {
   autocheckin: autocheckin_config_json,
   "baa-for-hipaa": baa_for_hipaa_config_json,
   basecamp3: basecamp3_config_json,
+  bolna: bolna_config_json,
   caldavcalendar: caldavcalendar__metadata_ts,
   campfire: campfire_config_json,
   campsite: campsite_config_json,
@@ -126,6 +131,7 @@ export const appStoreMetadata = {
   googlecalendar: googlecalendar__metadata_ts,
   googlevideo: googlevideo__metadata_ts,
   gtm: gtm_config_json,
+  hitpay: hitpay_config_json,
   "horizon-workrooms": horizon_workrooms_config_json,
   hubspot: hubspot__metadata_ts,
   huddle01video: huddle01video__metadata_ts,
@@ -141,6 +147,7 @@ export const appStoreMetadata = {
   mirotalk: mirotalk_config_json,
   "mock-payment-app": mock_payment_app_config_json,
   n8n: n8n_config_json,
+  nextcloudtalk: nextcloudtalk_config_json,
   office365calendar: office365calendar__metadata_ts,
   office365video: office365video_config_json,
   paypal: paypal_config_json,
@@ -151,6 +158,7 @@ export const appStoreMetadata = {
   posthog: posthog_config_json,
   qr_code: qr_code_config_json,
   raycast: raycast_config_json,
+  "retell-ai": retell_ai_config_json,
   riverside: riverside_config_json,
   roam: roam_config_json,
   "routing-forms": routing_forms_config_json,
