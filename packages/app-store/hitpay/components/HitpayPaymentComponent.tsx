@@ -7,6 +7,7 @@ import { useHitPayDropIn } from "./HitPayDropIn";
 const PaymentHitpayDataSchema = z.object({
   id: z.string(),
   url: z.string(),
+  defaultLink: z.string(),
 });
 
 interface IPaymentComponentProps {
@@ -31,19 +32,12 @@ export const HitpayPaymentComponent = (props: IPaymentComponentProps) => {
   useEffect(() => {
     if (parsedData.success) {
       if (window.self !== window.top && window.top) {
-        // window.top.open(parsedData.data.url, "_blank");
         if (!isInitialized) {
           init(
-            "https://securecheckout.sandbox.hit-pay.com/payment-request/@self-hosted/",
+            parsedData.data.defaultLink || "",
             {
-              // Optional, default is https
-              // scheme: 'http',
-              // Optional, default is hit-pay.com
               domain: "sandbox.hit-pay.com",
-              // Optional default is false
-              //closeOnError: true
             },
-            // Optional callbacks
             {
               onClose: onClose,
               onSuccess: onSuccess,
@@ -70,7 +64,7 @@ export const HitpayPaymentComponent = (props: IPaymentComponentProps) => {
     console.log("HitPayPaymentComponent onClose =>");
   };
 
-  const onError = (error: any) => {
+  const onError = (error: unknown) => {
     console.log("HitPayPaymentComponent onError =>", error);
   };
 

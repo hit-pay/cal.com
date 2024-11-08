@@ -44,21 +44,6 @@ export const useHitPayDropIn = (): HitPayDropInResult => {
     checkoutOptions: {},
   });
 
-  // function goFullscreen() {
-  //   if (document.documentElement.requestFullscreen) {
-  //     document.documentElement.requestFullscreen();
-  //   } else if (document.documentElement.mozRequestFullScreen) {
-  //     // Firefox
-  //     document.documentElement.mozRequestFullScreen();
-  //   } else if (document.documentElement.webkitRequestFullscreen) {
-  //     // Chrome, Safari, Opera
-  //     document.documentElement.webkitRequestFullscreen();
-  //   } else if (document.documentElement.msRequestFullscreen) {
-  //     // IE/Edge
-  //     document.documentElement.msRequestFullscreen();
-  //   }
-  // }
-
   const init = async (url: string, initOptions: InitOptions, callbacks?: Callbacks) => {
     if (!isInitialized) {
       hitPayOptions.current.defaultUrl = url;
@@ -69,40 +54,15 @@ export const useHitPayDropIn = (): HitPayDropInResult => {
       const domain = initOptions.domain || "hit-pay.com";
       const path = initOptions.path || "";
 
-      // const calEmbed = document.body;
-      // if (window.top) {
-      //   calEmbed = window.parent.document.querySelector(".cal-embed") as HTMLElement;
-      // } else {
-      //   calEmbed = document.querySelector(".cal-embed") as HTMLElement;
-      // }
-
-      // if (calEmbed) {
-      //   calEmbed.style.position = "fixed";
-      //   calEmbed.style.width = "100vw";
-      //   calEmbed.style.height = "100vh";
-      //   calEmbed.style.top = "0px";
-      //   calEmbed.style.left = "0px";
-      //   calEmbed.style.border = "none";
-      //   calEmbed.style.margin = "0px";
-      //   calEmbed.style.padding = "0px";
-      //   calEmbed.style.overflow = "hidden";
-      //   calEmbed.style.zIndex = "9998";
-      // }
-
-      // document.documentElement.style.cssText =
-      //   "width: 100vw; height: 100vh; overflow: hidden; margin: 0; padding: 0;";
-
       document.body.style.cssText = "width: 100vw; height: 100vh; overflow: hidden; margin: 0; padding: 0;";
 
       iframe.current = document.createElement("iframe");
       iframe.current.setAttribute("src", `${scheme}://${domain}${path}/hitpay-iframe.html`);
-      // iframe.current.setAttribute("allow", "payment");
       iframe.current.setAttribute("allowFullscreen", "true");
       iframe.current.style.position = "fixed";
       iframe.current.style.border = "0";
       iframe.current.style.width = "100vw";
       iframe.current.style.height = "100vh";
-      // iframe.current.style.height = "1024px";
       iframe.current.style.margin = "0";
       iframe.current.style.padding = "0";
       iframe.current.style.zIndex = "99999999";
@@ -114,13 +74,12 @@ export const useHitPayDropIn = (): HitPayDropInResult => {
 
       loadPromise.current = new Promise((resolve) => {
         resolveLoad.current = resolve;
-        resolve();
+        setTimeout(resolve, 2000);
       });
     }
   };
 
   const toggle = async (checkoutOptions: CheckoutOptions) => {
-    debugger;
     if (loadPromise.current) await loadPromise.current;
 
     if (hitPayOptions.current.visible) {
@@ -130,12 +89,6 @@ export const useHitPayDropIn = (): HitPayDropInResult => {
       document.body.style.overflow = "hidden";
       if (iframe.current) {
         iframe.current.style.display = "block";
-      }
-      try {
-        // await document.documentElement.requestFullscreen();
-        await iframe.current?.requestFullscreen({ navigationUI: "show" });
-      } catch (error: any) {
-        console.log("toggle error =>", error);
       }
     }
 
@@ -161,7 +114,6 @@ export const useHitPayDropIn = (): HitPayDropInResult => {
         }
 
         hitPayOptions.current.callbacks?.onClose && hitPayOptions.current.callbacks.onClose();
-        document.exitFullscreen();
       }
     }, delay);
   };
@@ -171,6 +123,7 @@ export const useHitPayDropIn = (): HitPayDropInResult => {
       if (event.data) {
         switch (event.data.type) {
           case "loaded":
+            debugger;
             loadPromise.current = null;
             setIsInitialized(true);
             if (resolveLoad.current) {
@@ -178,14 +131,17 @@ export const useHitPayDropIn = (): HitPayDropInResult => {
             }
             break;
           case "toggle":
+            debugger;
             toggle({});
             break;
           case "success":
+            debugger;
             if (hitPayOptions.current.callbacks?.onSuccess) {
               hitPayOptions.current.callbacks?.onSuccess();
             }
             break;
           case "error":
+            debugger;
             if (hitPayOptions.current.callbacks?.onError) {
               hitPayOptions.current.callbacks.onError(event.data.error);
             }

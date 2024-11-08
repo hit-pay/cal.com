@@ -104,7 +104,11 @@ export class PaymentService implements IAbstractPaymentService {
           amount: parseInt(data.amount) * 100,
           externalId: data.id,
           currency: data.currency,
-          data: Object.assign({}, data, { isPaid: false }) as unknown as Prisma.InputJsonValue,
+          data: Object.assign(
+            {},
+            { ...data, defaultLink: keyObj.defaultLink },
+            { isPaid: false }
+          ) as unknown as Prisma.InputJsonValue,
           fee: 0,
           refunded: false,
           success: false,
