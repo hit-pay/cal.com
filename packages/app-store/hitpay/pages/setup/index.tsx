@@ -11,7 +11,7 @@ import AppNotInstalledMessage from "@calcom/app-store/_components/AppNotInstalle
 import { useCompatSearchParams } from "@calcom/lib/hooks/useCompatSearchParams";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { trpc } from "@calcom/trpc";
-import { Button, showToast, Icon, Switch, TextField } from "@calcom/ui";
+import { Button, showToast, Icon, Switch } from "@calcom/ui";
 import { HeadSeo } from "@calcom/ui";
 
 import KeyField from "../../components/KeyInput";
@@ -76,7 +76,6 @@ function HitPaySetupPage(props: IHitPaySetupProps) {
     | {
         apiKey: string;
         saltKey: string;
-        defaultLink: string;
       }
     | undefined
   >();
@@ -98,13 +97,6 @@ function HitPaySetupPage(props: IHitPaySetupProps) {
       .min(64)
       .max(64, {
         message: t("max_limit_allowed_hint", { limit: 64 }),
-      }),
-    defaultLink: z
-      .string()
-      .trim()
-      .min(10)
-      .max(256, {
-        message: t("max_limit_allowed_hint", { limit: 256 }),
       }),
   });
 
@@ -148,7 +140,6 @@ function HitPaySetupPage(props: IHitPaySetupProps) {
     const _keyData = {
       apiKey: keyObj?.apiKey || "",
       saltKey: keyObj?.saltKey || "",
-      defaultLink: keyObj?.defaultLink || "",
     };
 
     reset(_keyData);
@@ -269,26 +260,6 @@ function HitPaySetupPage(props: IHitPaySetupProps) {
                     {errors.saltKey && (
                       <p data-testid="required" className="py-2 text-xs text-red-500">
                         {errors.saltKey?.message}
-                      </p>
-                    )}
-                  </div>
-                  <div className="w-full">
-                    <TextField
-                      {...register("defaultLink", {
-                        required: true,
-                      })}
-                      id="defaultLink"
-                      name="defaultLink"
-                      containerClassName="w-full"
-                      label="Default Link"
-                      autoComplete="off"
-                      autoCorrect="off"
-                      defaultValue={keyData?.defaultLink || ""}
-                    />
-
-                    {errors.defaultLink && (
-                      <p data-testid="required" className="py-2 text-xs text-red-500">
-                        {errors.defaultLink?.message}
                       </p>
                     )}
                   </div>

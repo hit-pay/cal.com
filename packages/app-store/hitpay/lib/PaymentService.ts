@@ -75,6 +75,7 @@ export class PaymentService implements IAbstractPaymentService {
         redirect_url: redirectUri,
         webhook: webhookUri,
         channel: "api_cal",
+        is_default: 1,
       };
 
       const response = await axios.post(requestUrl, qs.stringify(formData), {
@@ -86,6 +87,7 @@ export class PaymentService implements IAbstractPaymentService {
       });
 
       const data = response.data;
+      const { url, ...rest } = data;
       const uid = uuidv4();
 
       const paymentData = await prisma.payment.create({
@@ -106,7 +108,7 @@ export class PaymentService implements IAbstractPaymentService {
           currency: data.currency,
           data: Object.assign(
             {},
-            { ...data, defaultLink: keyObj.defaultLink },
+            { defaultLink: url, ...rest },
             { isPaid: false }
           ) as unknown as Prisma.InputJsonValue,
           fee: 0,
