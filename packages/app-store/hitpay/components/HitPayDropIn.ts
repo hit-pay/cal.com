@@ -156,7 +156,7 @@ export const useHitPayDropIn = (): HitPayDropInResult => {
     return () => {
       window.removeEventListener("message", handleMessage);
     };
-  }, [isInitialized]);
+  }, []);
 
   return { isInitialized, init, toggle };
 };

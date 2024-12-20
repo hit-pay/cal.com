@@ -33,10 +33,13 @@ export const HitpayPaymentComponent = (props: IPaymentComponentProps) => {
     if (parsedData.success) {
       if (window.self !== window.top && window.top) {
         if (!isInitialized) {
+          const subUrl = parsedData.data.url.substring("https://securecheckout.".length);
+          const arr = subUrl.split("/");
+          const domain = arr[0];
           init(
             parsedData.data.defaultLink || "",
             {
-              domain: "sandbox.hit-pay.com",
+              domain,
             },
             {
               onClose: onClose,
