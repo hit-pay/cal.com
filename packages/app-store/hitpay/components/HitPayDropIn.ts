@@ -26,7 +26,12 @@ interface HitPayOptions {
 
 export interface HitPayDropInResult {
   isInitialized: boolean;
-  init: (url: string, initOptions: InitOptions, callbacks?: Callbacks) => Promise<void>;
+  init: (
+    url: string,
+    initOptions: InitOptions,
+    checkoutOptions: CheckoutOptions,
+    callbacks?: Callbacks
+  ) => Promise<void>;
   toggle: (checkoutOptions: CheckoutOptions) => Promise<void>;
 }
 
@@ -44,11 +49,17 @@ export const useHitPayDropIn = (): HitPayDropInResult => {
     checkoutOptions: {},
   });
 
-  const init = async (url: string, initOptions: InitOptions, callbacks?: Callbacks) => {
+  const init = async (
+    url: string,
+    initOptions: InitOptions,
+    checkoutOptions: CheckoutOptions,
+    callbacks?: Callbacks
+  ) => {
     if (!isInitialized) {
       hitPayOptions.current.defaultUrl = url;
       hitPayOptions.current.initOptions = initOptions;
       hitPayOptions.current.callbacks = callbacks;
+      hitPayOptions.current.checkoutOptions.paymentRequest = checkoutOptions.paymentRequest || "";
 
       const scheme = initOptions.scheme || "https";
       const domain = initOptions.domain || "hit-pay.com";
@@ -57,7 +68,8 @@ export const useHitPayDropIn = (): HitPayDropInResult => {
       document.body.style.cssText = "width: 100vw; height: 100vh; overflow: hidden; margin: 0; padding: 0;";
 
       iframe.current = document.createElement("iframe");
-      iframe.current.setAttribute("src", `${scheme}://${domain}${path}/hitpay-iframe.html`);
+      iframe.current.setAttribute("src", `${scheme}://${domain}${path}/hitpay-iframe.html?post-parent=true`);
+      // iframe.current.setAttribute("src", `http://localhost:4040/hitpay-iframe.html?post-parent=true`);
       iframe.current.setAttribute("allowFullscreen", "true");
       iframe.current.style.position = "fixed";
       iframe.current.style.border = "0";
@@ -123,7 +135,8 @@ export const useHitPayDropIn = (): HitPayDropInResult => {
       if (event.data) {
         switch (event.data.type) {
           case "loaded":
-            debugger;
+            console.log("iframe loaded");
+            toggle(hitPayOptions.current.checkoutOptions);
             loadPromise.current = null;
             setIsInitialized(true);
             if (resolveLoad.current) {
@@ -131,17 +144,17 @@ export const useHitPayDropIn = (): HitPayDropInResult => {
             }
             break;
           case "toggle":
-            debugger;
+            console.log("iframe toggle");
             toggle({});
             break;
           case "success":
-            debugger;
+            console.log("iframe succeeded");
             if (hitPayOptions.current.callbacks?.onSuccess) {
               hitPayOptions.current.callbacks?.onSuccess();
             }
             break;
           case "error":
-            debugger;
+            console.log("iframe error =>", event.data.error);
             if (hitPayOptions.current.callbacks?.onError) {
               hitPayOptions.current.callbacks.onError(event.data.error);
             }

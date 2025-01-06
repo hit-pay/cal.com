@@ -1,5 +1,6 @@
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import qs from "qs";
+import { useEffect, useRef } from "react";
 import { z } from "zod";
 
 import { useHitPayDropIn } from "./HitPayDropIn";
@@ -8,6 +9,10 @@ const PaymentHitpayDataSchema = z.object({
   id: z.string(),
   url: z.string(),
   defaultLink: z.string(),
+  eventTypeSlug: z.string(),
+  bookingUid: z.string(),
+  email: z.string(),
+  bookingUserName: z.string(),
 });
 
 interface IPaymentComponentProps {
@@ -18,6 +23,7 @@ interface IPaymentComponentProps {
 
 export const HitpayPaymentComponent = (props: IPaymentComponentProps) => {
   const { isInitialized, init, toggle } = useHitPayDropIn();
+  const isSucceeded = useRef<boolean>(false);
   const router = useRouter();
   const { payment } = props;
   const { data } = payment;
@@ -42,6 +48,9 @@ export const HitpayPaymentComponent = (props: IPaymentComponentProps) => {
               domain,
             },
             {
+              paymentRequest: parsedData.data.id,
+            },
+            {
               onClose: onClose,
               onSuccess: onSuccess,
               onError: onError,
@@ -49,9 +58,9 @@ export const HitpayPaymentComponent = (props: IPaymentComponentProps) => {
           );
         }
 
-        toggle({
-          paymentRequest: parsedData.data.id,
-        });
+        // toggle({
+        //   paymentRequest: parsedData.data.id,
+        // });
       } else {
         router.replace(parsedData.data.url);
       }
@@ -60,15 +69,32 @@ export const HitpayPaymentComponent = (props: IPaymentComponentProps) => {
   }, []);
 
   const onSuccess = () => {
-    console.log("HitPayPaymentComponent onSuccess");
+    isSucceeded.current = true;
   };
 
   const onClose = () => {
-    console.log("HitPayPaymentComponent onClose =>");
+    console.log("onClose");
+    if (isSucceeded.current) {
+      if (parsedData.success) {
+        const queryParams = {
+          "flag.coep": false,
+          isSuccessBookingPage: true,
+          email: parsedData.data.email,
+          eventTypeSlug: parsedData.data.eventTypeSlug,
+        };
+
+        const query = qs.stringify(queryParams);
+        const url = `/booking/${parsedData.data.bookingUid}?${query}`;
+        router.replace(url);
+      }
+    }
   };
 
   const onError = (error: unknown) => {
-    console.log("HitPayPaymentComponent onError =>", error);
+    if (parsedData.success) {
+      const url = `/${parsedData.data.bookingUserName}/${parsedData.data.eventTypeSlug}`;
+      router.replace(url);
+    }
   };
 
   if (!parsedData.success || !parsedData.data?.url) {
