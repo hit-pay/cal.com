@@ -41,7 +41,8 @@ export const HitpayPaymentComponent = (props: IPaymentComponentProps) => {
         if (!isInitialized) {
           const subUrl = parsedData.data.url.substring("https://securecheckout.".length);
           const arr = subUrl.split("/");
-          const domain = arr[0];
+          // const domain = arr[0];
+          const domain = "staging.hit-pay.com";
           init(
             parsedData.data.defaultLink || "",
             {

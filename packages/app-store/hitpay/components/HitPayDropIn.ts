@@ -68,7 +68,11 @@ export const useHitPayDropIn = (): HitPayDropInResult => {
       document.body.style.cssText = "width: 100vw; height: 100vh; overflow: hidden; margin: 0; padding: 0;";
 
       iframe.current = document.createElement("iframe");
-      iframe.current.setAttribute("src", `${scheme}://${domain}${path}/hitpay-iframe.html?post-parent=true`);
+      // iframe.current.setAttribute("src", `${scheme}://${domain}${path}/hitpay-iframe.html?post-parent=true`);
+      iframe.current.setAttribute(
+        "src",
+        `${scheme}://${domain}${path}/dropin-beta/hitpay-iframe.html?post-parent=true`
+      );
       // iframe.current.setAttribute("src", `http://localhost:4040/hitpay-iframe.html?post-parent=true`);
       iframe.current.setAttribute("allowFullscreen", "true");
       iframe.current.style.position = "fixed";
