@@ -22,7 +22,7 @@ interface IPaymentComponentProps {
 }
 
 export const HitpayPaymentComponent = (props: IPaymentComponentProps) => {
-  const { isInitialized, init, toggle } = useHitPayDropIn();
+  const { isInitialized, init } = useHitPayDropIn();
   const isSucceeded = useRef<boolean>(false);
   const router = useRouter();
   const { payment } = props;
@@ -38,11 +38,12 @@ export const HitpayPaymentComponent = (props: IPaymentComponentProps) => {
   useEffect(() => {
     if (parsedData.success) {
       if (window.self !== window.top && window.top) {
+        debugger;
         if (!isInitialized) {
           const subUrl = parsedData.data.url.substring("https://securecheckout.".length);
           const arr = subUrl.split("/");
-          // const domain = arr[0];
-          const domain = "staging.hit-pay.com";
+          const domain = arr[0];
+
           init(
             parsedData.data.defaultLink || "",
             {
@@ -58,10 +59,6 @@ export const HitpayPaymentComponent = (props: IPaymentComponentProps) => {
             }
           );
         }
-
-        // toggle({
-        //   paymentRequest: parsedData.data.id,
-        // });
       } else {
         router.replace(parsedData.data.url);
       }
@@ -74,7 +71,6 @@ export const HitpayPaymentComponent = (props: IPaymentComponentProps) => {
   };
 
   const onClose = () => {
-    console.log("onClose");
     if (isSucceeded.current) {
       if (parsedData.success) {
         const queryParams = {
