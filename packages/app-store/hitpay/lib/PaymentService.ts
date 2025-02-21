@@ -41,12 +41,17 @@ export class PaymentService implements IAbstractPaymentService {
   ) {
     try {
       const booking = await prisma.booking.findFirst({
+        where: {
+          id: bookingId,
+        },
         select: {
           uid: true,
           title: true,
-        },
-        where: {
-          id: bookingId,
+          eventType: {
+            select: {
+              slug: true,
+            },
+          },
         },
       });
 
@@ -120,6 +125,7 @@ export class PaymentService implements IAbstractPaymentService {
           data: Object.assign(
             {},
             { defaultLink, ...data },
+            { bookingUserName: username, eventTypeSlug: booking.eventType?.slug, bookingUid: booking.uid },
             { isPaid: false }
           ) as unknown as Prisma.InputJsonValue,
           fee: 0,
