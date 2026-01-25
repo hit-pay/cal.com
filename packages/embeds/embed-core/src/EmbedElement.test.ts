@@ -6,7 +6,14 @@ import type { Mock } from "vitest";
 
 import { EmbedElement } from "./EmbedElement";
 import inlineHTML from "./Inline/inlineHtml";
+import { EMBED_DARK_THEME_CLASS, EMBED_LIGHT_THEME_CLASS } from "./constants";
 import { getColorSchemeDarkQuery } from "./ui-utils";
+
+type EmbedElementWithPrivateMethodsAccess = {
+  boundResizeHandler: () => void;
+  boundPrefersDarkThemeChangedHandler: (e: MediaQueryListEvent) => void;
+  boundEnsureContainerTakesSkeletonHeightWhenVisible: () => void;
+}
 
 (function defineEmbedTestElement() {
   class TestEmbedElement extends EmbedElement {
@@ -29,6 +36,75 @@ import { getColorSchemeDarkQuery } from "./ui-utils";
   }
   customElements.define("test-embed", TestEmbedElement);
 })();
+
+function mockWindowEventListeners() {
+  const eventListenerCallbacks = new Map<string, EventListenerOrEventListenerObject>();
+  const animationFrameCallbacks: Map<number, FrameRequestCallback> = new Map();
+  const colorSchemeListenerCallbacks: Map<string, EventListenerOrEventListenerObject> = new Map();
+  const colorSchemeQuery = getColorSchemeDarkQuery();
+  let nextAnimationFrameId = 1;
+
+  vi
+    .spyOn(window, "addEventListener")
+    .mockImplementation((event: string, callback: EventListenerOrEventListenerObject) => {
+      eventListenerCallbacks.set(event, callback);
+    });
+
+  vi
+    .spyOn(window, "removeEventListener")
+    .mockImplementation((event: string, callback: EventListenerOrEventListenerObject) => {
+      const registeredCallback = eventListenerCallbacks.get(event);
+      expect(registeredCallback).toBe(callback);
+      eventListenerCallbacks.delete(event);
+    });
+
+  vi
+    .spyOn(window, "requestAnimationFrame")
+    .mockImplementation((callback: FrameRequestCallback) => {
+      const id = nextAnimationFrameId++;
+      animationFrameCallbacks.set(id, callback);
+      return id;
+    });
+
+  vi
+    .spyOn(window, "cancelAnimationFrame")
+    .mockImplementation((id: number) => {
+      animationFrameCallbacks.delete(id);
+    });
+
+  vi
+    .spyOn(colorSchemeQuery, "addEventListener")
+    .mockImplementation((event: string, callback: EventListenerOrEventListenerObject) => {
+      colorSchemeListenerCallbacks.set(event, callback);
+    });
+
+  vi
+    .spyOn(colorSchemeQuery, "removeEventListener")
+    .mockImplementation((event: string, callback: EventListenerOrEventListenerObject) => {
+      colorSchemeListenerCallbacks.delete(event);
+    });
+
+  return {
+    expectListenerToBeRegistered: (event: string, callback: EventListenerOrEventListenerObject) => {
+      expect(eventListenerCallbacks.get(event)).toBe(callback);
+    },
+    expectListenerToBeUnregistered: (event: string, callback: EventListenerOrEventListenerObject) => {
+      expect(eventListenerCallbacks.get(event)).not.toBe(callback);
+    },
+    expectAnimationFrameListenerToBeRegistered: (rafId: number, callback: FrameRequestCallback) => {
+      expect(animationFrameCallbacks.get(rafId)).toBe(callback);
+    },
+    expectAnimationFrameListenerToBeUnregistered: (rafId: number, callback: FrameRequestCallback) => {
+      expect(animationFrameCallbacks.get(rafId)).not.toBe(callback);
+    },
+    expectColorSchemeListenerToBeRegistered: (callback: (e: MediaQueryListEvent) => void) => {
+      expect(colorSchemeListenerCallbacks.get("change")).toBe(callback);
+    },
+    expectColorSchemeListenerToBeUnregistered: (callback: (e: MediaQueryListEvent) => void) => {
+      expect(colorSchemeListenerCallbacks.get("change")).not.toBe(callback);
+    },
+  };
+}
 
 function buildMediaQueryListEvent({ type, matches }: { type: string; matches: boolean }) {
   return {
@@ -77,6 +153,7 @@ function createTestEmbedElement(data: {
   element.innerHTML = inlineHTML({
     layout: dataset?.layout,
     pageType: dataset?.pageType as EmbedPageType | null,
+    externalThemeClass: dataset?.theme === "dark" ? EMBED_DARK_THEME_CLASS : EMBED_LIGHT_THEME_CLASS,
   });
 
   document.body.appendChild(element);
@@ -131,7 +208,6 @@ function mockGetComputedStyle() {
 
 describe("EmbedElement", () => {
   let element: EmbedElement;
-  let mockGetSkeletonData: Mock;
 
   beforeEach(() => {
     // Register the custom element
@@ -142,7 +218,9 @@ describe("EmbedElement", () => {
     if (!element) {
       throw new Error("`element` not defined");
     }
-    document.body.removeChild(element);
+    if (element.parentNode) {
+      document.body.removeChild(element);
+    }
     vi.restoreAllMocks();
   });
 
@@ -166,14 +244,14 @@ describe("EmbedElement", () => {
         expectDefaultLoader(element);
       });
 
-      it("should show default loader for when page type is not supported", () => {
+      it("should show skeleton loader for any non-empty page type (including unsupported ones)", () => {
         element = createTestEmbedElement({
           dataset: {
             pageType: "unknown",
           },
         });
 
-        expectDefaultLoader(element);
+        expectSkeletonLoader(element);
       });
 
       it("should hide skeleton loader when toggled off", () => {
@@ -221,7 +299,7 @@ describe("EmbedElement", () => {
         isModal = true;
       });
 
-      it("should show default loader for unsupported page types", () => {
+      it("should show default loader only when page type is not provided", () => {
         element = createTestEmbedElement({
           isModal,
         });
@@ -269,8 +347,8 @@ describe("EmbedElement", () => {
           },
           getSkeletonData: vi.fn(),
         });
-        expect(element.classList.contains("dark")).toBe(true);
-        expect(element.classList.contains("light")).toBe(false);
+        expect(element.classList.contains(EMBED_DARK_THEME_CLASS)).toBe(true);
+        expect(element.classList.contains(EMBED_LIGHT_THEME_CLASS)).toBe(false);
       });
 
       it("should update theme class when system preference changes as long as embed theme is not set", () => {
@@ -279,8 +357,8 @@ describe("EmbedElement", () => {
         });
         getColorSchemeDarkQuery().dispatchEvent(buildMediaQueryListEvent({ type: "change", matches: true }));
 
-        expect(element.classList.contains("dark")).toBe(true);
-        expect(element.classList.contains("light")).toBe(false);
+        expect(element.classList.contains(EMBED_DARK_THEME_CLASS)).toBe(true);
+        expect(element.classList.contains(EMBED_LIGHT_THEME_CLASS)).toBe(false);
       });
 
       it("should not update theme on system color scheme change when embed theme is set", () => {
@@ -291,7 +369,7 @@ describe("EmbedElement", () => {
           getSkeletonData: vi.fn(),
         });
         getColorSchemeDarkQuery().dispatchEvent(buildMediaQueryListEvent({ type: "change", matches: true }));
-        expect(element.classList.contains("light")).toBe(true);
+        expect(element.classList.contains(EMBED_LIGHT_THEME_CLASS)).toBe(true);
       });
     });
 
@@ -355,6 +433,34 @@ describe("EmbedElement", () => {
         // Now resize the window
         window.dispatchEvent(new Event("resize"));
         expectLayoutToBe("month_view", element);
+      });
+    });
+
+    describe("Cleanup Behavior", () => {
+      it("should clean up all resources when element is disconnected", () => {
+        const { expectListenerToBeRegistered, expectListenerToBeUnregistered, expectAnimationFrameListenerToBeRegistered, expectAnimationFrameListenerToBeUnregistered, expectColorSchemeListenerToBeRegistered, expectColorSchemeListenerToBeUnregistered } = mockWindowEventListeners();
+
+        element = createTestEmbedElement({
+          dataset: { pageType: "user.event.booking.slots" },
+        });
+
+
+
+        const internalEmbed = element as unknown as EmbedElementWithPrivateMethodsAccess;
+
+        const boundResizeHandler = internalEmbed.boundResizeHandler;
+        const boundPrefersDarkThemeChangedHandler = internalEmbed.boundPrefersDarkThemeChangedHandler;
+        const boundEnsureContainerTakesSkeletonHeightWhenVisible = internalEmbed.boundEnsureContainerTakesSkeletonHeightWhenVisible;
+
+        expectListenerToBeRegistered("resize", boundResizeHandler);
+        expectColorSchemeListenerToBeRegistered(boundPrefersDarkThemeChangedHandler);
+        expectAnimationFrameListenerToBeRegistered(element.skeletonContainerHeightTimer!, boundEnsureContainerTakesSkeletonHeightWhenVisible);
+
+        document.body.removeChild(element);
+
+        expectListenerToBeUnregistered("resize", boundResizeHandler);
+        expectColorSchemeListenerToBeUnregistered(boundPrefersDarkThemeChangedHandler);
+        expectAnimationFrameListenerToBeUnregistered(element.skeletonContainerHeightTimer!, boundEnsureContainerTakesSkeletonHeightWhenVisible);
       });
     });
   });

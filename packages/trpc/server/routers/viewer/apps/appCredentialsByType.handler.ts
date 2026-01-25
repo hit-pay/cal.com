@@ -1,6 +1,7 @@
-import { getAllDelegationCredentialsForUserByAppType } from "@calcom/lib/delegationCredential/server";
-import { UserRepository } from "@calcom/lib/server/repository/user";
+import { getAllDelegationCredentialsForUserByAppType } from "@calcom/app-store/delegationCredential";
+import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import { prisma } from "@calcom/prisma";
+import { safeCredentialSelect } from "@calcom/prisma/selects/credential";
 import type { TrpcSessionUser } from "@calcom/trpc/server/types";
 
 import type { TAppCredentialsByTypeInputSchema } from "./appCredentialsByType.schema";
@@ -15,7 +16,8 @@ type AppCredentialsByTypeOptions = {
 /** Used for grabbing credentials on specific app pages */
 export const appCredentialsByTypeHandler = async ({ ctx, input }: AppCredentialsByTypeOptions) => {
   const { user } = ctx;
-  const userAdminTeams = await UserRepository.getUserAdminTeams(ctx.user.id);
+  const userAdminTeams = await new UserRepository(prisma).getUserAdminTeams({ userId: ctx.user.id });
+  const { user: _, ...safeCredentialSelectWithoutUser } = safeCredentialSelect;
   const userAdminTeamsIds = userAdminTeams?.teams?.map(({ team }) => team.id) ?? [];
 
   const credentials = await prisma.credential.findMany({
@@ -30,10 +32,12 @@ export const appCredentialsByTypeHandler = async ({ ctx, input }: AppCredentials
       ],
       type: input.appType,
     },
-    include: {
+    select: {
+      ...safeCredentialSelectWithoutUser,
       user: {
         select: {
           name: true,
+          email: true,
         },
       },
       team: {
@@ -51,8 +55,12 @@ export const appCredentialsByTypeHandler = async ({ ctx, input }: AppCredentials
 
   // For app pages need to return which teams the user can install the app on
   // return user.credentials.filter((app) => app.type == input.appType).map((credential) => credential.id);
+  const allCredentials: Array<(typeof delegationCredentials)[number] | (typeof credentials)[number]> = [
+    ...delegationCredentials,
+    ...credentials,
+  ];
   return {
-    credentials: [...delegationCredentials, ...credentials],
+    credentials: allCredentials,
     userAdminTeams: userAdminTeamsIds,
   };
 };

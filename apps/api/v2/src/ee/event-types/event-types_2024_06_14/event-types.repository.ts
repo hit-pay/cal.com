@@ -1,25 +1,35 @@
+import type { SortOrderType } from "@calcom/platform-types";
+import type { Prisma } from "@calcom/prisma/client";
+import { Injectable } from "@nestjs/common";
+import { InputEventTransformed_2024_06_14 } from "@/ee/event-types/event-types_2024_06_14/transformed";
 import { PrismaReadService } from "@/modules/prisma/prisma-read.service";
 import { PrismaWriteService } from "@/modules/prisma/prisma-write.service";
-import { Injectable } from "@nestjs/common";
-import type { Prisma } from "@prisma/client";
-
-import { InputEventTransformed_2024_06_14 } from "@calcom/platform-types";
 
 @Injectable()
 export class EventTypesRepository_2024_06_14 {
-  constructor(private readonly dbRead: PrismaReadService, private readonly dbWrite: PrismaWriteService) {}
+  constructor(
+    private readonly dbRead: PrismaReadService,
+    private readonly dbWrite: PrismaWriteService
+  ) {}
 
   async createUserEventType(
     userId: number,
     body: Omit<InputEventTransformed_2024_06_14, "destinationCalendar">
   ) {
+    const { calVideoSettings, ...restBody } = body;
+
     return this.dbWrite.prisma.eventType.create({
       data: {
-        ...body,
+        ...restBody,
         userId,
         locations: body.locations,
         bookingFields: body.bookingFields,
         users: { connect: { id: userId } },
+        ...(calVideoSettings && {
+          calVideoSettings: {
+            create: calVideoSettings,
+          },
+        }),
       },
     });
   }
@@ -50,29 +60,105 @@ export class EventTypesRepository_2024_06_14 {
     });
   }
 
+  private readonly usersInclude = {
+    select: {
+      id: true,
+      name: true,
+      username: true,
+      isPlatformManaged: true,
+      avatarUrl: true,
+      brandColor: true,
+      darkBrandColor: true,
+      weekStart: true,
+      metadata: true,
+      organizationId: true,
+      organization: {
+        select: { slug: true },
+      },
+      movedToProfile: {
+        select: {
+          id: true,
+          username: true,
+          organizationId: true,
+          organization: {
+            select: {
+              id: true,
+              slug: true,
+              isPlatform: true,
+            },
+          },
+        },
+      },
+      profiles: {
+        select: {
+          id: true,
+          username: true,
+          organizationId: true,
+          organization: {
+            select: {
+              id: true,
+              slug: true,
+              isPlatform: true,
+            },
+          },
+        },
+      },
+    },
+  };
+
   async getUserEventType(userId: number, eventTypeId: number) {
     return this.dbRead.prisma.eventType.findFirst({
       where: {
         id: eventTypeId,
         userId,
       },
-      include: { users: true, schedule: true, destinationCalendar: true },
+      include: { users: this.usersInclude, schedule: true, destinationCalendar: true },
     });
   }
 
-  async getUserEventTypes(userId: number) {
+  async getUserEventTypes(userId: number, sortCreatedAt?: SortOrderType) {
     return this.dbRead.prisma.eventType.findMany({
       where: {
         userId,
       },
-      include: { users: true, schedule: true, destinationCalendar: true },
+      ...(sortCreatedAt && { orderBy: { id: sortCreatedAt } }),
+      include: { users: this.usersInclude, schedule: true, destinationCalendar: true },
+    });
+  }
+
+  async getUserEventTypesPublic(userId: number, sortCreatedAt?: SortOrderType) {
+    return this.dbRead.prisma.eventType.findMany({
+      where: {
+        userId,
+        hidden: false,
+      },
+      ...(sortCreatedAt && { orderBy: { id: sortCreatedAt } }),
+      include: { users: this.usersInclude, schedule: true, destinationCalendar: true },
     });
   }
 
   async getEventTypeById(eventTypeId: number) {
     return this.dbRead.prisma.eventType.findUnique({
       where: { id: eventTypeId },
-      include: { users: true, schedule: true, destinationCalendar: true },
+      include: {
+        users: this.usersInclude,
+        schedule: true,
+        destinationCalendar: true,
+        calVideoSettings: true,
+      },
+    });
+  }
+
+  async getEventTypeByIdWithHosts(eventTypeId: number) {
+    return this.dbRead.prisma.eventType.findUnique({
+      where: { id: eventTypeId },
+      include: {
+        users: this.usersInclude,
+        schedule: true,
+        destinationCalendar: true,
+        calVideoSettings: true,
+        hosts: true,
+      },
     });
   }
 
@@ -107,7 +193,7 @@ export class EventTypesRepository_2024_06_14 {
           slug: slug,
         },
       },
-      include: { users: true, schedule: true, destinationCalendar: true },
+      include: { users: this.usersInclude, schedule: true, destinationCalendar: true },
     });
   }
 
@@ -125,5 +211,27 @@ export class EventTypesRepository_2024_06_14 {
 
   async deleteEventType(eventTypeId: number) {
     return this.dbWrite.prisma.eventType.delete({ where: { id: eventTypeId } });
+  }
+
+  async isUserHostOfEventType(userId: number, eventTypeId: number) {
+    const eventType = await this.dbRead.prisma.eventType.findFirst({
+      where: {
+        id: eventTypeId,
+        hosts: { some: { userId: userId } },
+      },
+      select: { id: true },
+    });
+    return !!eventType;
+  }
+
+  async isUserAssignedToEventType(userId: number, eventTypeId: number) {
+    const eventType = await this.dbRead.prisma.eventType.findFirst({
+      where: {
+        id: eventTypeId,
+        users: { some: { id: userId } },
+      },
+      select: { id: true },
+    });
+    return !!eventType;
   }
 }

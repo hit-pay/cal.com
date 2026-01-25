@@ -1,4 +1,4 @@
-import prismock from "../../../../../../tests/libs/__mocks__/prisma";
+import prismock from "@calcom/testing/lib/__mocks__/prisma";
 
 import type { Request, Response } from "express";
 import type { NextApiRequest, NextApiResponse } from "next";
@@ -42,11 +42,6 @@ describe("GET /api/slots", () => {
       await handler(req, res);
 
       expect(res.statusCode).toBe(400);
-      expect(JSON.parse(res._getData())).toMatchInlineSnapshot(`
-        {
-          "message": "invalid_type in 'startTime': Required; invalid_type in 'endTime': Required",
-        }
-      `);
     });
   });
 

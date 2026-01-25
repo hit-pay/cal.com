@@ -1,12 +1,14 @@
 import { type TFunction } from "i18next";
 
-import { TeamBilling } from "@calcom/ee/billing/teams";
+import { getTeamBillingServiceFactory } from "@calcom/ee/billing/di/containers/Billing";
+import { PermissionCheckService } from "@calcom/features/pbac/services/permission-check.service";
+import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import { checkRateLimitAndThrowError } from "@calcom/lib/checkRateLimitAndThrowError";
 import logger from "@calcom/lib/logger";
 import { safeStringify } from "@calcom/lib/safeStringify";
 import { getTranslation } from "@calcom/lib/server/i18n";
-import { isOrganisationOwner } from "@calcom/lib/server/queries/organisations";
-import { UserRepository } from "@calcom/lib/server/repository/user";
+import { isOrganisationOwner } from "@calcom/features/pbac/utils/isOrganisationAdmin";
+import prisma from "@calcom/prisma";
 import { MembershipRole } from "@calcom/prisma/enums";
 import type { CreationSource } from "@calcom/prisma/enums";
 import type { TrpcSessionUser } from "@calcom/trpc/server/types";
@@ -227,8 +229,9 @@ export const inviteMembersWithNoInviterPermissionCheck = async (
     });
   }
 
-  const teamBilling = TeamBilling.init(team);
-  await teamBilling.updateQuantity();
+  const teamBillingServiceFactory = getTeamBillingServiceFactory();
+  const teamBillingService = teamBillingServiceFactory.init(team);
+  await teamBillingService.updateQuantity();
 
   return {
     // TODO: Better rename it to invitations only maybe?
@@ -245,6 +248,22 @@ const inviteMembers = async ({ ctx, input }: InviteMemberOptions) => {
   const { usernameOrEmail, role, isPlatform, creationSource } = input;
 
   const team = await getTeamOrThrow(input.teamId);
+
+  const permissionCheckService = new PermissionCheckService();
+  const hasPermission = await permissionCheckService.checkPermission({
+    userId: ctx.user.id,
+    teamId: team.id,
+    permission: "team.invite",
+    fallbackRoles: [MembershipRole.OWNER, MembershipRole.ADMIN],
+  });
+
+  if (!hasPermission) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "You are not authorized to invite team members in this organization's team",
+    });
+  }
+
   const requestedSlugForTeam = team?.metadata?.requestedSlug ?? null;
   const isTeamAnOrg = team.isOrganization;
   const organization = inviter.profile.organization;
@@ -266,7 +285,10 @@ const inviteMembers = async ({ ctx, input }: InviteMemberOptions) => {
   if (isPlatform) {
     inviterOrgId = team.id;
     orgSlug = team ? team.slug || requestedSlugForTeam : null;
-    isInviterOrgAdmin = await UserRepository.isAdminOrOwnerOfTeam({ userId: inviter.id, teamId: team.id });
+    isInviterOrgAdmin = await new UserRepository(prisma).isAdminOrOwnerOfTeam({
+      userId: inviter.id,
+      teamId: team.id,
+    });
   }
 
   await ensureAtleastAdminPermissions({

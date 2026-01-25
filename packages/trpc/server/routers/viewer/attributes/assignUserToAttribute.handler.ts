@@ -1,4 +1,4 @@
-import { getWhereClauseForAttributeOptionsManagedByCalcom } from "@calcom/lib/service/attribute/server/utils";
+import { getWhereClauseForAttributeOptionsManagedByCalcom } from "@calcom/features/attributes/lib/utils";
 import slugify from "@calcom/lib/slugify";
 import prisma from "@calcom/prisma";
 
@@ -77,10 +77,12 @@ const assignUserToAttributeHandler = async ({ input, ctx }: GetOptions) => {
     });
   }
 
-  const membership = await prisma.membership.findFirst({
+  const membership = await prisma.membership.findUnique({
     where: {
-      userId: input.userId,
-      teamId: org.id,
+      userId_teamId: {
+        userId: input.userId,
+        teamId: org.id,
+      },
     },
   });
 

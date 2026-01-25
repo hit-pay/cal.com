@@ -1,244 +1,418 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-import { embedStore, getEmbedBookerState } from "../embed-iframe";
+import { fakeCurrentDocumentUrl, nextTick } from "../embed-iframe/__tests__/test-utils";
 
-// Test helper functions
-type fakeCurrentDocumentUrlParams = {
-  origin?: string;
-  path?: string;
-  params?: Record<string, string>;
-};
 
-function fakeCurrentDocumentUrl({
-  origin = "https://example.com",
-  path = "",
-  params = {},
-}: fakeCurrentDocumentUrlParams = {}) {
-  const url = new URL(path, origin);
-  Object.entries(params).forEach(([key, value]) => {
-    url.searchParams.set(key, value);
-  });
-  return mockDocumentUrl(url);
-}
-
-function mockDocumentUrl(url: URL | string) {
-  return vi.spyOn(document, "URL", "get").mockReturnValue(url.toString());
-}
-
-function createSearchParams(params: Record<string, string>) {
-  const searchParams = new URLSearchParams();
-  Object.entries(params).forEach(([key, value]) => {
-    searchParams.set(key, value);
-  });
-  return searchParams;
-}
-
-describe("embedStore.router.ensureQueryParamsInUrl", () => {
-  // Mock window.history and URL
-
-  const originalHistory = window.history;
-  const originalURL = window.URL;
-
-  function nextTick() {
-    vi.advanceTimersByTime(100);
-  }
-
-  beforeEach(() => {
+describe("embed-iframe", async () => {
+  let sdkActionManager: typeof import("../sdk-event").sdkActionManager;
+  let embedStore: typeof import("../embed-iframe/lib/embedStore").embedStore
+  let resetPageData: typeof import("../embed-iframe/lib/embedStore").resetPageData;
+  beforeEach(async () => {
+    ({ sdkActionManager } = await import("../sdk-event"));
+    ({ embedStore } = await import("../embed-iframe/lib/embedStore"));
+    ({ resetPageData } = await import("../embed-iframe/lib/embedStore"));
+    // Ensure that we have it globally so that unexpected errors like 'document is not defined' don't happen due to timer being fired when test is shutting down
     vi.useFakeTimers();
-    // Mock requestAnimationFrame and cancelAnimationFrame
-    window.requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
-      console.log("mockRequestAnimationFrame called");
-      const timeoutId = setTimeout(() => {
-        callback(performance.now());
-      }, 100) as unknown as number;
-      return timeoutId;
-    });
-
-    // Mock history.replaceState
-    window.history.replaceState = (...args) => {
-      const url = args[2];
-      if (!url) {
-        throw new Error("url is not provided");
-      }
-      vi.spyOn(document, "URL", "get").mockReturnValue(url.toString());
-    };
+    // It is provided by App before embed-iframe loads. So, meet this requirement here.
+    window.getEmbedNamespace = vi.fn(() => "default");
+    // Ensure document.URL is always defined for tests
+    fakeCurrentDocumentUrl();
   });
 
   afterEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
     vi.useRealTimers();
-    // Cleanup
-    window.history = originalHistory;
-    window.URL = originalURL;
-    vi.resetAllMocks();
-  });
-
-  it("should add missing parameters to URL", async () => {
-    // Setup
+    vi.clearAllTimers();
+    embedStore.viewId = null;
+    // Ensure document.URL is defined before calling resetPageData which uses log()
     fakeCurrentDocumentUrl();
-
-    // Execute
-    const { stopEnsuringQueryParamsInUrl } = embedStore.router.ensureQueryParamsInUrl({
-      toBeThereParams: {
-        theme: "dark",
-        layout: "month",
-      },
-      toRemoveParams: [],
-    });
-
-    // Assert
-    expect(document.URL).toContain("theme=dark");
-    expect(document.URL).toContain("layout=month");
-
-    // Cleanup
-    stopEnsuringQueryParamsInUrl();
+    resetPageData();
   });
 
-  it("should ensure that no existing value of param exists as is", () => {
-    fakeCurrentDocumentUrl({ params: { guest: "initial" } });
-    const { stopEnsuringQueryParamsInUrl } = embedStore.router.ensureQueryParamsInUrl({
-      toBeThereParams: { guest: ["ax.com", "bx.com"] },
-      toRemoveParams: [],
-    });
-    expect(document.URL).toContain("guest=ax.com");
-    expect(document.URL).toContain("guest=bx.com");
-    expect(document.URL).not.toContain("guest=initial");
+  describe("embedStore.router.ensureQueryParamsInUrl", async () => {
+    const originalHistory = window.history;
+    const originalURL = window.URL;
+    beforeEach(async () => {
+      vi.useFakeTimers();
+      window.requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+        const timeoutId = setTimeout(() => {
+          callback(performance.now());
+        }, 100) as unknown as number;
+        return timeoutId;
+      });
 
-    stopEnsuringQueryParamsInUrl();
+      window.history.replaceState = (...args) => {
+        const url = args[2];
+        if (!url) {
+          throw new Error("url is not provided");
+        }
+        vi.spyOn(document, "URL", "get").mockReturnValue(url.toString());
+      };
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+      // Cleanup
+      window.history = originalHistory;
+      window.URL = originalURL;
+      vi.resetAllMocks();
+    });
+
+    it("should add missing parameters to URL", async () => {
+      fakeCurrentDocumentUrl();
+      const { stopEnsuringQueryParamsInUrl } = embedStore.router.ensureQueryParamsInUrl({
+        toBeThereParams: {
+          theme: "dark",
+          layout: "month",
+        },
+        toRemoveParams: [],
+      });
+
+      expect(document.URL).toContain("theme=dark");
+      expect(document.URL).toContain("layout=month");
+
+      stopEnsuringQueryParamsInUrl();
+    });
+
+    it("should ensure that no existing value of param exists as is", () => {
+      fakeCurrentDocumentUrl({ params: { guest: "initial" } });
+      const { stopEnsuringQueryParamsInUrl } = embedStore.router.ensureQueryParamsInUrl({
+        toBeThereParams: { guest: ["ax.com", "bx.com"] },
+        toRemoveParams: [],
+      });
+      expect(document.URL).toContain("guest=ax.com");
+      expect(document.URL).toContain("guest=bx.com");
+      expect(document.URL).not.toContain("guest=initial");
+
+      stopEnsuringQueryParamsInUrl();
+    });
+
+    it("should remove specified parameters from URL", async () => {
+      // Setup
+      fakeCurrentDocumentUrl({ params: { remove: "true", keep: "yes" } });
+
+      // Execute
+      const { stopEnsuringQueryParamsInUrl } = embedStore.router.ensureQueryParamsInUrl({
+        toBeThereParams: {},
+        toRemoveParams: ["remove"],
+      });
+
+      // Assert
+      expect(document.URL).not.toContain("remove=true");
+      expect(document.URL).toContain("keep=yes");
+
+      // Cleanup
+      stopEnsuringQueryParamsInUrl();
+    });
+
+    it("should handle empty parameters", async () => {
+      fakeCurrentDocumentUrl();
+      const { stopEnsuringQueryParamsInUrl } = embedStore.router.ensureQueryParamsInUrl({
+        toBeThereParams: {},
+        toRemoveParams: [],
+      });
+      nextTick();
+      stopEnsuringQueryParamsInUrl();
+    });
+
+    it("should restore parameters if they are changed before cleanup, otherwise not", async () => {
+      fakeCurrentDocumentUrl();
+      const initialTheme = "dark";
+
+      const { stopEnsuringQueryParamsInUrl } = embedStore.router.ensureQueryParamsInUrl({
+        toBeThereParams: { theme: initialTheme },
+        toRemoveParams: [],
+      });
+
+      // First interval - should add the parameter
+      expect(document.URL).toContain(`theme=${initialTheme}`);
+
+      const changedThemeByReact = "light";
+      // Simulate React code changing the URL
+      fakeCurrentDocumentUrl({ params: { theme: changedThemeByReact } });
+
+      // Next interval - should restore our parameter
+      nextTick();
+      expect(document.URL).toContain(`theme=${initialTheme}`);
+
+      // After cleanup, changes should not be restored
+      stopEnsuringQueryParamsInUrl();
+      fakeCurrentDocumentUrl({ params: { theme: "light" } });
+      nextTick();
+      expect(document.URL).toContain("theme=light");
+      expect(document.URL).not.toContain(`theme=${initialTheme}`);
+    });
   });
 
-  it("should remove specified parameters from URL", async () => {
-    // Setup
-    fakeCurrentDocumentUrl({ params: { remove: "true", keep: "yes" } });
-
-    // Execute
-    const { stopEnsuringQueryParamsInUrl } = embedStore.router.ensureQueryParamsInUrl({
-      toBeThereParams: {},
-      toRemoveParams: ["remove"],
+  describe("getEmbedBookerState", async () => {
+    let getEmbedBookerState: typeof import("../embed-iframe").getEmbedBookerState;
+    beforeEach(async () => {
+      fakeCurrentDocumentUrl();
+      ({ getEmbedBookerState } = await import("../embed-iframe"));
     });
 
-    // Assert
-    expect(document.URL).not.toContain("remove=true");
-    expect(document.URL).toContain("keep=yes");
+    it("should return 'initializing' when bookerState is 'loading'", () => {
+      const result = getEmbedBookerState({
+        bookerState: "loading",
+        slotsQuery: {
+          isLoading: false,
+          isPending: false,
+          isSuccess: false,
+          isError: false,
+        },
+      });
+      expect(result).toBe("initializing");
+    });
 
-    // Cleanup
-    stopEnsuringQueryParamsInUrl();
+    it("should return 'slotsLoading' when slotsQuery.isLoading is true", () => {
+      const result = getEmbedBookerState({
+        bookerState: "selecting_date",
+        slotsQuery: {
+          isLoading: true,
+          isPending: false,
+          isSuccess: false,
+          isError: false,
+        },
+      });
+      expect(result).toBe("slotsLoading");
+    });
+
+    it("should return 'slotsDone' when slotsQuery.isPending is true but not loading", () => {
+      const result = getEmbedBookerState({
+        bookerState: "selecting_date",
+        slotsQuery: {
+          isLoading: false,
+          isPending: true,
+          isSuccess: false,
+          isError: false,
+        },
+      });
+      expect(result).toBe("slotsDone");
+    });
+
+    it("should return 'slotsDone' when slotsQuery.isSuccess is true", () => {
+      const result = getEmbedBookerState({
+        bookerState: "selecting_date",
+        slotsQuery: {
+          isLoading: false,
+          isPending: false,
+          isSuccess: true,
+          isError: false,
+        },
+      });
+      expect(result).toBe("slotsDone");
+    });
+
+    it("should return 'slotsLoadingError' when slotsQuery.isError is true", () => {
+      const result = getEmbedBookerState({
+        bookerState: "selecting_date",
+        slotsQuery: {
+          isLoading: false,
+          isPending: false,
+          isSuccess: false,
+          isError: true,
+        },
+      });
+      expect(result).toBe("slotsLoadingError");
+    });
+
+    it("should return 'slotsPending' when no other conditions are met", () => {
+      const result = getEmbedBookerState({
+        bookerState: "selecting_date",
+        slotsQuery: {
+          isLoading: false,
+          isPending: false,
+          isSuccess: false,
+          isError: false,
+        },
+      });
+      expect(result).toBe("slotsPending");
+    });
   });
 
-  it("should handle empty parameters", async () => {
-    fakeCurrentDocumentUrl();
-    const { stopEnsuringQueryParamsInUrl } = embedStore.router.ensureQueryParamsInUrl({
-      toBeThereParams: {},
-      toRemoveParams: [],
+  describe("linkReady event handler", async () => {
+    const createTestEmbedState = (overrides?: {
+      viewId?: number | null;
+      bookerViewedHasFired?: boolean;
+      bookerReopenedHasFired?: boolean;
+      bookerReloadedHasFired?: boolean;
+      bookerReadyHasFired?: boolean;
+    }) => {
+      embedStore.viewId = overrides?.viewId ?? null;
+      embedStore.pageData.eventsState.bookerViewed.hasFired =
+        overrides?.bookerViewedHasFired ?? false;
+      embedStore.pageData.eventsState.bookerReopened.hasFired =
+        overrides?.bookerReopenedHasFired ?? false;
+      embedStore.pageData.eventsState.bookerReloaded.hasFired =
+        overrides?.bookerReloadedHasFired ?? false;
+      embedStore.pageData.eventsState.bookerReady.hasFired = overrides?.bookerReadyHasFired ?? false;
+    };
+    let embedStore: typeof import("../embed-iframe/lib/embedStore").embedStore;
+
+    beforeEach(async () => {
+      ({ embedStore } = await import("../embed-iframe/lib/embedStore"));
+      vi.useRealTimers();
+      fakeCurrentDocumentUrl();
+      const mockTop = {};
+      Object.defineProperty(window, "top", {
+        value: mockTop,
+        writable: true,
+        configurable: true,
+      });
+      Object.defineProperty(window, "isEmbed", {
+        value: () => true,
+        writable: true,
+        configurable: true,
+      });
+      console.log('Importing embed-iframe');
+      await import("../embed-iframe");
+      embedStore.viewId = null;
+      resetPageData();
     });
-    nextTick();
-    stopEnsuringQueryParamsInUrl();
+
+    it("should set viewId to 1 when linkReady fires for the first time", () => {
+      embedStore.viewId = null;
+      resetPageData();
+      const initialViewId = embedStore.viewId;
+
+      sdkActionManager?.fire("linkReady", {});
+
+      expect(initialViewId).toBeNull();
+      expect(embedStore.viewId).toBe(1);
+    });
+
+    it("should increment viewId when linkReady fires on subsequent views", () => {
+      embedStore.viewId = 1;
+      resetPageData();
+      const initialViewId = embedStore.viewId;
+      expect(initialViewId).toBe(1);
+
+      sdkActionManager?.fire("linkReady", {});
+
+      expect(embedStore.viewId).toBe(initialViewId + 1);
+    });
+
+    it("should reset hasFired flags when linkReady fires", async () => {
+      const { embedStore } = await import("../embed-iframe/lib/embedStore");
+
+      embedStore.viewId = 1;
+      const oldPageDataReference = embedStore.pageData;
+      embedStore.pageData.eventsState.bookerViewed.hasFired = true;
+      embedStore.pageData.eventsState.bookerReopened.hasFired = true;
+      embedStore.pageData.eventsState.bookerReloaded.hasFired = true;
+      embedStore.pageData.eventsState.bookerReady.hasFired = true;
+
+      const initialViewId = embedStore.viewId;
+
+      sdkActionManager?.fire("linkReady", {});
+
+      expect(embedStore.viewId).toBe(initialViewId + 1);
+      // Verify resetPageData was called (pageData should be a new object reference)
+      expect(embedStore.pageData).not.toEqual(oldPageDataReference);
+      // Verify flags were reset
+      expect(embedStore.pageData.eventsState.bookerViewed.hasFired).toBe(false);
+      expect(embedStore.pageData.eventsState.bookerReopened.hasFired).toBe(false);
+      expect(embedStore.pageData.eventsState.bookerReloaded.hasFired).toBe(false);
+      expect(embedStore.pageData.eventsState.bookerReady.hasFired).toBe(false);
+    });
+
+    it("should not update viewId or reset flags when linkReady fires during prerendering", () => {
+      fakeCurrentDocumentUrl({ params: { prerender: "true" } });
+      createTestEmbedState({
+        viewId: null,
+        bookerViewedHasFired: true,
+        bookerReopenedHasFired: true,
+        bookerReloadedHasFired: true,
+        bookerReadyHasFired: true,
+      });
+
+      sdkActionManager?.fire("linkReady", {});
+
+      expect(embedStore.viewId).toBeNull();
+      expect(embedStore.pageData.eventsState.bookerViewed.hasFired).toBe(true);
+      expect(embedStore.pageData.eventsState.bookerReopened.hasFired).toBe(true);
+      expect(embedStore.pageData.eventsState.bookerReloaded.hasFired).toBe(true);
+      expect(embedStore.pageData.eventsState.bookerReady.hasFired).toBe(true);
+    });
+
+    it("should increment viewId and reset flags on multiple linkReady events", () => {
+      embedStore.viewId = null;
+      resetPageData();
+
+      sdkActionManager?.fire("linkReady", {});
+      expect(embedStore.viewId).toBe(1);
+      embedStore.pageData.eventsState.bookerViewed.hasFired = true;
+      embedStore.pageData.eventsState.bookerReady.hasFired = true;
+
+      sdkActionManager?.fire("linkReady", {});
+      expect(embedStore.viewId).toBe(2);
+      expect(embedStore.pageData.eventsState.bookerViewed.hasFired).toBe(false);
+      expect(embedStore.pageData.eventsState.bookerReopened.hasFired).toBe(false);
+      expect(embedStore.pageData.eventsState.bookerReloaded.hasFired).toBe(false);
+      expect(embedStore.pageData.eventsState.bookerReady.hasFired).toBe(false);
+
+      sdkActionManager?.fire("linkReady", {});
+      expect(embedStore.viewId).toBe(3);
+    });
   });
 
-  it("should restore parameters if they are changed before cleanup, otherwise not", async () => {
-    fakeCurrentDocumentUrl();
-    const initialTheme = "dark";
+  describe("useSlotsViewOnSmallScreen parameter parsing", () => {
+    let embedStore: typeof import("../embed-iframe/lib/embedStore").embedStore;
 
-    const { stopEnsuringQueryParamsInUrl } = embedStore.router.ensureQueryParamsInUrl({
-      toBeThereParams: { theme: initialTheme },
-      toRemoveParams: [],
+    beforeEach(async () => {
+      // Reset modules to ensure fresh import
+      vi.resetModules();
+      ({ embedStore } = await import("../embed-iframe/lib/embedStore"));
+      vi.useRealTimers();
+
+      // Mock window properties needed by main()
+      const mockTop = {};
+      Object.defineProperty(window, "top", {
+        value: mockTop,
+        writable: true,
+        configurable: true,
+      });
+      Object.defineProperty(window, "isEmbed", {
+        value: () => true,
+        writable: true,
+        configurable: true,
+      });
+      window.getEmbedNamespace = vi.fn(() => "default");
+      window.getEmbedTheme = vi.fn(() => null);
     });
 
-    // First interval - should add the parameter
-    expect(document.URL).toContain(`theme=${initialTheme}`);
-
-    const changedThemeByReact = "light";
-    // Simulate React code changing the URL
-    fakeCurrentDocumentUrl({ params: { theme: changedThemeByReact } });
-
-    // Next interval - should restore our parameter
-    nextTick();
-    expect(document.URL).toContain(`theme=${initialTheme}`);
-
-    // After cleanup, changes should not be restored
-    stopEnsuringQueryParamsInUrl();
-    fakeCurrentDocumentUrl({ params: { theme: "light" } });
-    nextTick();
-    expect(document.URL).toContain("theme=light");
-    expect(document.URL).not.toContain(`theme=${initialTheme}`);
-  });
-});
-
-describe("getEmbedBookerState", () => {
-  it("should return 'initializing' when bookerState is 'loading'", () => {
-    const result = getEmbedBookerState({
-      bookerState: "loading",
-      slotsQuery: {
-        isLoading: false,
-        isPending: false,
-        isSuccess: false,
-        isError: false,
-      },
+    afterEach(() => {
+      vi.resetModules();
+      vi.clearAllMocks();
     });
-    expect(result).toBe("initializing");
-  });
 
-  it("should return 'slotsLoading' when slotsQuery.isLoading is true", () => {
-    const result = getEmbedBookerState({
-      bookerState: "selecting_date",
-      slotsQuery: {
-        isLoading: true,
-        isPending: false,
-        isSuccess: false,
-        isError: false,
-      },
-    });
-    expect(result).toBe("slotsLoading");
-  });
+    it("should default to false when parameter is not present", async () => {
+      fakeCurrentDocumentUrl(); // No useSlotsViewOnSmallScreen param
+      await import("../embed-iframe"); // This triggers main()
 
-  it("should return 'slotsDone' when slotsQuery.isPending is true but not loading", () => {
-    const result = getEmbedBookerState({
-      bookerState: "selecting_date",
-      slotsQuery: {
-        isLoading: false,
-        isPending: true,
-        isSuccess: false,
-        isError: false,
-      },
+      expect(embedStore.uiConfig?.useSlotsViewOnSmallScreen).toBe(false);
     });
-    expect(result).toBe("slotsDone");
-  });
 
-  it("should return 'slotsDone' when slotsQuery.isSuccess is true", () => {
-    const result = getEmbedBookerState({
-      bookerState: "selecting_date",
-      slotsQuery: {
-        isLoading: false,
-        isPending: false,
-        isSuccess: true,
-        isError: false,
-      },
-    });
-    expect(result).toBe("slotsDone");
-  });
+    it("should be true when parameter is 'true'", async () => {
+      fakeCurrentDocumentUrl({ params: { useSlotsViewOnSmallScreen: "true" } });
+      await import("../embed-iframe"); // This triggers main()
 
-  it("should return 'slotsLoadingError' when slotsQuery.isError is true", () => {
-    const result = getEmbedBookerState({
-      bookerState: "selecting_date",
-      slotsQuery: {
-        isLoading: false,
-        isPending: false,
-        isSuccess: false,
-        isError: true,
-      },
+      expect(embedStore.uiConfig?.useSlotsViewOnSmallScreen).toBe(true);
     });
-    expect(result).toBe("slotsLoadingError");
-  });
 
-  it("should return 'slotsPending' when no other conditions are met", () => {
-    const result = getEmbedBookerState({
-      bookerState: "selecting_date",
-      slotsQuery: {
-        isLoading: false,
-        isPending: false,
-        isSuccess: false,
-        isError: false,
-      },
+    it("should be false when parameter is 'false'", async () => {
+      fakeCurrentDocumentUrl({ params: { useSlotsViewOnSmallScreen: "false" } });
+      await import("../embed-iframe"); // This triggers main()
+
+      expect(embedStore.uiConfig?.useSlotsViewOnSmallScreen).toBe(false);
     });
-    expect(result).toBe("slotsPending");
+
+    it("should be false when parameter has any other value", async () => {
+      fakeCurrentDocumentUrl({ params: { useSlotsViewOnSmallScreen: "invalid" } });
+      await import("../embed-iframe"); // This triggers main()
+
+      expect(embedStore.uiConfig?.useSlotsViewOnSmallScreen).toBe(false);
+    });
   });
 });

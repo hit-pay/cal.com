@@ -5,7 +5,8 @@ import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
 import { getMultipleDurationValue } from "@calcom/features/bookings/lib/get-booking";
 import { getSlugOrRequestedSlug } from "@calcom/features/ee/organizations/lib/orgDomains";
 import { orgDomainConfig } from "@calcom/features/ee/organizations/lib/orgDomains";
-import { EventRepository } from "@calcom/lib/server/repository/event";
+import { EventRepository } from "@calcom/features/eventtypes/repositories/EventRepository";
+import { shouldHideBrandingForTeamEvent } from "@calcom/features/profile/lib/hideBranding";
 import slugify from "@calcom/lib/slugify";
 import prisma from "@calcom/prisma";
 
@@ -27,7 +28,13 @@ export const getServerSideProps = async (context: GetServerSidePropsContext) => 
     },
     select: {
       id: true,
+      isPrivate: true,
       hideBranding: true,
+      parent: {
+        select: {
+          hideBranding: true,
+        },
+      },
     },
   });
 
@@ -75,8 +82,12 @@ export const getServerSideProps = async (context: GetServerSidePropsContext) => 
       user: teamSlug,
       teamId: team.id,
       slug: meetingSlug,
-      isBrandingHidden: team?.hideBranding,
+      isBrandingHidden: shouldHideBrandingForTeamEvent({
+        eventTypeId: eventData.id,
+        team,
+      }),
       themeBasis: null,
+      teamIsPrivate: team.isPrivate,
     },
   };
 };

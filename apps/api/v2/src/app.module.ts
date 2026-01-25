@@ -27,7 +27,9 @@ import { AppController } from "./app.controller";
   imports: [
     SentryModule.forRoot(),
     ConfigModule.forRoot({
-      ignoreEnvFile: true,
+      ...(process.env.NODE_ENV === "production"
+        ? { envFilePath: ".env.production" }
+        : { ignoreEnvFile: true }),
       isGlobal: true,
       load: [appConfig],
     }),
@@ -86,10 +88,16 @@ export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
     consumer
       .apply(RawBodyMiddleware)
-      .forRoutes({
-        path: "/api/v2/billing/webhook",
-        method: RequestMethod.POST,
-      })
+      .forRoutes(
+        {
+          path: "/api/v2/billing/webhook",
+          method: RequestMethod.POST,
+        },
+        {
+          path: "/v2/billing/webhook",
+          method: RequestMethod.POST,
+        }
+      )
       .apply(JsonBodyMiddleware)
       .forRoutes("*")
       .apply(RequestIdMiddleware)

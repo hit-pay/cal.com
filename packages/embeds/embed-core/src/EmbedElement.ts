@@ -1,3 +1,4 @@
+import { EMBED_DARK_THEME_CLASS, EMBED_LIGHT_THEME_CLASS } from "./constants";
 import type { EmbedThemeConfig, AllPossibleLayouts, BookerLayouts, EmbedPageType } from "./types";
 import {
   getThemeClassForEmbed,
@@ -7,7 +8,7 @@ import {
   addDarkColorSchemeChangeListener,
   getMaxHeightForModal,
 } from "./ui-utils";
-
+import type { ExternalThemeClass } from "./ui/themeClass";
 type ShadowRootWithStyle = ShadowRoot & {
   host: HTMLElement & { style: CSSStyleDeclaration };
 };
@@ -18,7 +19,7 @@ export class EmbedElement extends HTMLElement {
   public isModal!: boolean;
   public skeletonContainerHeightTimer: number | null = null;
   // Theme Class is derived from `this.theme` as well as system color scheme preference
-  public themeClass!: string;
+  public themeClass!: ExternalThemeClass;
   public layout!: AllPossibleLayouts;
   public getSkeletonData!: (_args: { layout: AllPossibleLayouts; pageType: EmbedPageType | null }) => {
     skeletonContent: string;
@@ -28,14 +29,12 @@ export class EmbedElement extends HTMLElement {
 
   private boundResizeHandler: () => void;
   private boundPrefersDarkThemeChangedHandler: (e: MediaQueryListEvent) => void;
+  private boundEnsureContainerTakesSkeletonHeightWhenVisible: () => void;
+
   private isSkeletonSupportedPageType() {
     const pageType = this.getPageType();
-    return (
-      pageType === "user.event.booking.slots" ||
-      pageType === "team.event.booking.slots" ||
-      pageType === "user.event.booking.form" ||
-      pageType === "team.event.booking.form"
-    );
+    // Any pageType being set is considered as skeleton supported. There is always a fallback skeleton loader if no direct match for a skeleton loader is found based on pageType
+    return !!pageType;
   }
   public assertHasShadowRoot(): asserts this is HTMLElement & { shadowRoot: ShadowRootWithStyle } {
     if (!this.shadowRoot) {
@@ -43,8 +42,8 @@ export class EmbedElement extends HTMLElement {
     }
   }
 
-  public getPageType(): EmbedPageType {
-    return this.dataset.pageType as EmbedPageType;
+  public getPageType(): EmbedPageType | undefined {
+    return this.dataset.pageType as EmbedPageType | undefined;
   }
   public getLayout(): AllPossibleLayouts {
     return getTrueLayout({ layout: (this.dataset.layout as BookerLayouts | undefined) ?? null });
@@ -102,7 +101,7 @@ export class EmbedElement extends HTMLElement {
         return;
       }
     }
-    const rafId = requestAnimationFrame(this.ensureContainerTakesSkeletonHeightWhenVisible.bind(this));
+    const rafId = requestAnimationFrame(this.boundEnsureContainerTakesSkeletonHeightWhenVisible);
     this.skeletonContainerHeightTimer = rafId;
     return rafId;
   }
@@ -157,12 +156,11 @@ export class EmbedElement extends HTMLElement {
     this.isModal = data.isModal;
     this.layout = this.getLayout();
     this.theme = this.dataset.theme as EmbedThemeConfig | null;
-    this.themeClass = getThemeClassForEmbed({ theme: this.theme });
-    this.classList.add(this.themeClass);
-
+    this.setTheme(this.theme);
     this.getSkeletonData = data.getSkeletonData;
     this.boundResizeHandler = this.resizeHandler.bind(this);
     this.boundPrefersDarkThemeChangedHandler = this.prefersDarkThemeChangedHandler.bind(this);
+    this.boundEnsureContainerTakesSkeletonHeightWhenVisible = this.ensureContainerTakesSkeletonHeightWhenVisible.bind(this);
   }
 
   public isSkeletonLoaderVisible() {
@@ -197,20 +195,26 @@ export class EmbedElement extends HTMLElement {
     skeletonEl.innerHTML = skeletonContent;
   }
 
+  public setTheme(theme: EmbedThemeConfig | null) {
+    const allPossibleThemeClasses = [EMBED_DARK_THEME_CLASS, EMBED_LIGHT_THEME_CLASS];
+
+    const newThemeClass = getThemeClassForEmbed({ theme });
+
+    if (newThemeClass === this.themeClass) {
+      return;
+    }
+    this.themeClass = newThemeClass;
+    this.classList.remove(...allPossibleThemeClasses);
+    this.classList.add(this.themeClass);
+  }
+
   public prefersDarkThemeChangedHandler(e: MediaQueryListEvent) {
     const isDarkPreferred = e.matches;
-    const allPossibleThemeClasses = ["dark", "light"];
     if (isThemePreferenceProvided(this.theme)) {
       // User has provided a theme preference, so we stick to that and don't react to system theme change
       return;
     }
-    const newThemeClass = getThemeClassForEmbed({
-      theme: isDarkPreferred ? "dark" : "light",
-    });
-    if (newThemeClass !== this.themeClass) {
-      this.classList.remove(...allPossibleThemeClasses);
-      this.classList.add(newThemeClass);
-    }
+    this.setTheme(isDarkPreferred ? "dark" : "light");
   }
   connectedCallback() {
     // Make sure to show the loader initially.

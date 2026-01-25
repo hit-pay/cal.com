@@ -1,22 +1,24 @@
 import type { Browser, Page, WorkerInfo } from "@playwright/test";
 import { expect } from "@playwright/test";
-import type Prisma from "@prisma/client";
-import type { Team } from "@prisma/client";
-import { Prisma as PrismaType } from "@prisma/client";
 import { hashSync as hash } from "bcryptjs";
 import { uuid } from "short-uuid";
 import { v4 } from "uuid";
 
 import updateChildrenEventTypes from "@calcom/features/ee/managed-event-types/lib/handleChildrenEventTypes";
 import stripe from "@calcom/features/ee/payments/server/stripe";
+import type { AppFlags, FeatureId } from "@calcom/features/flags/config";
+import { FeaturesRepository } from "@calcom/features/flags/features.repository";
+import { ProfileRepository } from "@calcom/features/profile/repositories/ProfileRepository";
 import { DEFAULT_SCHEDULE, getAvailabilityFromSchedule } from "@calcom/lib/availability";
 import { WEBAPP_URL } from "@calcom/lib/constants";
-import { ProfileRepository } from "@calcom/lib/server/repository/profile";
 import { prisma } from "@calcom/prisma";
+import type { Team } from "@calcom/prisma/client";
+import type { Prisma, User, EventType } from "@calcom/prisma/client";
 import { MembershipRole, SchedulingType, TimeUnit, WorkflowTriggerEvents } from "@calcom/prisma/enums";
 import { teamMetadataSchema } from "@calcom/prisma/zod-utils";
 import type { Schedule } from "@calcom/types/schedule";
 
+import { createRoutingForm } from "../lib/test-helpers/routingFormHelpers";
 import { selectFirstAvailableTimeSlotNextMonth, teamEventSlug, teamEventTitle } from "../lib/testUtils";
 import type { createEmailsFixture } from "./emails";
 import { TimeZoneEnum } from "./types";
@@ -27,16 +29,28 @@ export function hashPassword(password: string) {
   return hashedPassword;
 }
 
+/**
+ * Default feature flags enabled for all teams and organizations created in E2E tests.
+ * These flags represent the most common production features that should be tested by default.
+ */
+const DEFAULT_TEAM_FEATURE_FLAGS: Array<keyof AppFlags> = [];
+
+/**
+ * Default feature flags enabled for individual users created in E2E tests.
+ * Empty by default - users don't typically have feature flags unless explicitly needed.
+ */
+const DEFAULT_USER_FEATURE_FLAGS: Array<keyof AppFlags> = ["bookings-v3"];
+
 type UserFixture = ReturnType<typeof createUserFixture>;
 
 export type CreateUsersFixture = ReturnType<typeof createUsersFixture>;
 
-const userIncludes = PrismaType.validator<PrismaType.UserInclude>()({
+const userIncludes = {
   eventTypes: true,
   workflows: true,
   credentials: true,
   routingForms: true,
-});
+} satisfies Prisma.UserInclude;
 
 type InstallStripeParamsSkipTrue = {
   eventTypeIds?: number[];
@@ -62,16 +76,11 @@ type InstallStripeParams = InstallStripeParamsUnion & {
   page: Page;
 };
 
-const userWithEventTypes = PrismaType.validator<PrismaType.UserArgs>()({
+const _userWithEventTypes = {
   include: userIncludes,
-});
+} satisfies Prisma.UserDefaultArgs;
 
-const seededForm = {
-  id: "948ae412-d995-4865-875a-48302588de03",
-  name: "Seeded Form - Pro",
-};
-
-type UserWithIncludes = PrismaType.UserGetPayload<typeof userWithEventTypes>;
+type UserWithIncludes = Prisma.UserGetPayload<typeof _userWithEventTypes>;
 
 const createTeamWorkflow = async (user: { id: number }, team: { id: number }) => {
   return await prisma.workflow.create({
@@ -159,6 +168,8 @@ const createTeamAndAddUser = async (
     orgRequestedSlug,
     schedulingType,
     assignAllTeamMembersForSubTeamEvents,
+    teamSlug,
+    teamFeatureFlags,
   }: {
     user: { id: number; email: string; username: string | null; role?: MembershipRole };
     isUnpublished?: boolean;
@@ -171,13 +182,17 @@ const createTeamAndAddUser = async (
     orgRequestedSlug?: string;
     schedulingType?: SchedulingType;
     assignAllTeamMembersForSubTeamEvents?: boolean;
+    teamSlug?: string;
+    teamFeatureFlags?: Array<keyof AppFlags>;
   },
   workerInfo: WorkerInfo
 ) => {
   const slugIndex = index ? `-count-${index}` : "";
   const slug =
-    orgRequestedSlug ?? `${isOrg ? "org" : "team"}-${workerInfo.workerIndex}-${Date.now()}${slugIndex}`;
-  const data: PrismaType.TeamCreateInput = {
+    teamSlug ??
+    orgRequestedSlug ??
+    `${isOrg ? "org" : "team"}-${workerInfo.workerIndex}-${Date.now()}${slugIndex}`;
+  const data: Prisma.TeamCreateInput = {
     name: `user-id-${user.id}'s ${isOrg ? "Org" : "Team"}`,
     isOrganization: isOrg,
   };
@@ -190,19 +205,21 @@ const createTeamAndAddUser = async (
         orgAutoAcceptEmail: user.email.split("@")[1],
         isOrganizationVerified: !!isOrgVerified,
         isOrganizationConfigured: isDnsSetup,
+        orgAutoJoinOnSignup: true,
       },
     };
   }
 
   data.slug = !isUnpublished ? slug : undefined;
   if (isOrg && hasSubteam) {
-    const team = await createTeamAndAddUser({ user }, workerInfo);
-    await createTeamEventType(user, team, {
+    const subteam = await createTeamAndAddUser({ user, teamFeatureFlags }, workerInfo);
+
+    await createTeamEventType(user, subteam, {
       schedulingType: schedulingType,
       assignAllTeamMembers: assignAllTeamMembersForSubTeamEvents,
     });
-    await createTeamWorkflow(user, team);
-    data.children = { connect: [{ id: team.id }] };
+    await createTeamWorkflow(user, subteam);
+    data.children = { connect: [{ id: subteam.id }] };
   }
   data.orgProfiles = isOrg
     ? {
@@ -234,6 +251,21 @@ const createTeamAndAddUser = async (
       accepted: true,
     },
   });
+
+  // Enable feature flags for the team if specified
+  if (teamFeatureFlags && teamFeatureFlags.length > 0) {
+    const featuresRepository = new FeaturesRepository(prisma);
+    await Promise.all(
+      teamFeatureFlags.map((featureFlag) =>
+        featuresRepository.setTeamFeatureState({
+          teamId: team.id,
+          featureId: featureFlag as FeatureId,
+          state: "enabled",
+          assignedBy: "e2e-fixture",
+        })
+      )
+    );
+  }
 
   return team;
 };
@@ -270,10 +302,28 @@ export const createUsersFixture = (
         | (CustomUserOpts & {
             organizationId?: number | null;
             overrideDefaultEventTypes?: boolean;
+            /**
+             * Feature flags to enable for this individual user.
+             * Defaults to DEFAULT_USER_FEATURE_FLAGS.
+             * Pass specific flags to enable user-level features.
+             * @default DEFAULT_USER_FEATURE_FLAGS
+             * @example
+             * ```typescript
+             * // Default feature flags
+             * const user = await users.create();
+             *
+             * // Specific feature flags
+             * const user = await users.create({
+             *   userFeatureFlags: ["bookings-v3"]
+             * });
+             * ```
+             */
+            userFeatureFlags?: Array<keyof AppFlags>;
           })
         | null,
       scenario: {
         seedRoutingForms?: boolean;
+        seedRoutingFormWithAttributeRouting?: boolean;
         hasTeam?: true;
         numberOfTeams?: number;
         teamRole?: MembershipRole;
@@ -281,6 +331,7 @@ export const createUsersFixture = (
         schedulingType?: SchedulingType;
         teamEventTitle?: string;
         teamEventSlug?: string;
+        teamSlug?: string;
         teamEventLength?: number;
         isOrg?: boolean;
         isOrgVerified?: boolean;
@@ -293,6 +344,31 @@ export const createUsersFixture = (
         orgRequestedSlug?: string;
         assignAllTeamMembers?: boolean;
         assignAllTeamMembersForSubTeamEvents?: boolean;
+        /**
+         * Feature flags to enable for the created team(s) and organization(s).
+         * Defaults to DEFAULT_TEAM_FEATURE_FLAGS when hasTeam is true.
+         * Pass an empty array to disable default flags, or pass specific flags to override.
+         * Applies to both regular teams and organizations (when isOrg: true).
+         * @default DEFAULT_TEAM_FEATURE_FLAGS
+         * @example
+         * ```typescript
+         * // Default feature flags
+         * const user = await users.create({}, { hasTeam: true });
+         *
+         * // Specific feature flags
+         * const user = await users.create({}, {
+         *   hasTeam: true,
+         *   teamFeatureFlags: ["pbac"]
+         * });
+         *
+         * // Organizations also get the flags by default
+         * const user = await users.create({}, {
+         *   hasTeam: true,
+         *   isOrg: true
+         * }); // Org gets DEFAULT_TEAM_FEATURE_FLAGS
+         * ```
+         */
+        teamFeatureFlags?: Array<keyof AppFlags>;
       } = {}
     ) => {
       const _user = await prisma.user.create({
@@ -341,199 +417,34 @@ export const createUsersFixture = (
         });
       }
 
-      if (scenario.seedRoutingForms) {
-        const multiSelectOption2Uuid = "d1302635-9f12-17b1-9153-c3a854649182";
-        const multiSelectOption1Uuid = "d1292635-9f12-17b1-9153-c3a854649182";
-        const selectOption1Uuid = "d0292635-9f12-17b1-9153-c3a854649182";
-        const selectOption2Uuid = "d0302635-9f12-17b1-9153-c3a854649182";
-        const multiSelectLegacyFieldUuid = "d4292635-9f12-17b1-9153-c3a854649182";
-        const multiSelectFieldUuid = "d9892635-9f12-17b1-9153-c3a854649182";
-        const selectFieldUuid = "d1302635-9f12-17b1-9153-c3a854649182";
-        const legacySelectFieldUuid = "f0292635-9f12-17b1-9153-c3a854649182";
-        await prisma.app_RoutingForms_Form.create({
-          data: {
-            routes: [
-              {
-                id: "8a898988-89ab-4cde-b012-31823f708642",
-                action: { type: "eventTypeRedirectUrl", value: "pro/30min" },
-                queryValue: {
-                  id: "8a898988-89ab-4cde-b012-31823f708642",
-                  type: "group",
-                  children1: {
-                    "8988bbb8-0123-4456-b89a-b1823f70c5ff": {
-                      type: "rule",
-                      properties: {
-                        field: "c4296635-9f12-47b1-8153-c3a854649182",
-                        value: ["event-routing"],
-                        operator: "equal",
-                        valueSrc: ["value"],
-                        valueType: ["text"],
-                      },
-                    },
-                  },
-                },
-              },
-              {
-                id: "aa8aaba9-cdef-4012-b456-71823f70f7ef",
-                action: { type: "customPageMessage", value: "Custom Page Result" },
-                queryValue: {
-                  id: "aa8aaba9-cdef-4012-b456-71823f70f7ef",
-                  type: "group",
-                  children1: {
-                    "b99b8a89-89ab-4cde-b012-31823f718ff5": {
-                      type: "rule",
-                      properties: {
-                        field: "c4296635-9f12-47b1-8153-c3a854649182",
-                        value: ["custom-page"],
-                        operator: "equal",
-                        valueSrc: ["value"],
-                        valueType: ["text"],
-                      },
-                    },
-                  },
-                },
-              },
-              {
-                id: "a8ba9aab-4567-489a-bcde-f1823f71b4ad",
-                action: { type: "externalRedirectUrl", value: "https://cal.com/peer" },
-                queryValue: {
-                  id: "a8ba9aab-4567-489a-bcde-f1823f71b4ad",
-                  type: "group",
-                  children1: {
-                    "998b9b9a-0123-4456-b89a-b1823f7232b9": {
-                      type: "rule",
-                      properties: {
-                        field: "c4296635-9f12-47b1-8153-c3a854649182",
-                        value: ["external-redirect"],
-                        operator: "equal",
-                        valueSrc: ["value"],
-                        valueType: ["text"],
-                      },
-                    },
-                  },
-                },
-              },
-              {
-                id: "aa8ba8b9-0123-4456-b89a-b182623406d8",
-                action: { type: "customPageMessage", value: "Multiselect(Legacy) chosen" },
-                queryValue: {
-                  id: "aa8ba8b9-0123-4456-b89a-b182623406d8",
-                  type: "group",
-                  children1: {
-                    "b98a8abb-cdef-4012-b456-718262343d27": {
-                      type: "rule",
-                      properties: {
-                        field: multiSelectLegacyFieldUuid,
-                        value: [["Option-2"]],
-                        operator: "multiselect_equals",
-                        valueSrc: ["value"],
-                        valueType: ["multiselect"],
-                      },
-                    },
-                  },
-                },
-              },
-              {
-                id: "bb9ea8b9-0123-4456-b89a-b182623406d8",
-                action: { type: "customPageMessage", value: "Multiselect chosen" },
-                queryValue: {
-                  id: "aa8ba8b9-0123-4456-b89a-b182623406d8",
-                  type: "group",
-                  children1: {
-                    "b98a8abb-cdef-4012-b456-718262343d27": {
-                      type: "rule",
-                      properties: {
-                        field: multiSelectFieldUuid,
-                        value: [[multiSelectOption2Uuid]],
-                        operator: "multiselect_equals",
-                        valueSrc: ["value"],
-                        valueType: ["multiselect"],
-                      },
-                    },
-                  },
-                },
-              },
-              {
-                id: "898899aa-4567-489a-bcde-f1823f708646",
-                action: { type: "customPageMessage", value: "Fallback Message" },
-                isFallback: true,
-                queryValue: { id: "898899aa-4567-489a-bcde-f1823f708646", type: "group" },
-              },
-            ],
-            fields: [
-              {
-                id: "c4296635-9f12-47b1-8153-c3a854649182",
-                type: "text",
-                label: "Test field",
-                required: true,
-              },
-              {
-                id: multiSelectLegacyFieldUuid,
-                type: "multiselect",
-                label: "Multi Select(with Legacy `selectText`)",
-                identifier: "multi",
-                selectText: "Option-1\nOption-2",
-                required: false,
-              },
-              {
-                id: multiSelectFieldUuid,
-                type: "multiselect",
-                label: "Multi Select",
-                identifier: "multi-new-format",
-                options: [
-                  {
-                    id: multiSelectOption1Uuid,
-                    label: "Option-1",
-                  },
-                  {
-                    id: multiSelectOption2Uuid,
-                    label: "Option-2",
-                  },
-                ],
-                required: false,
-              },
-              {
-                id: legacySelectFieldUuid,
-                type: "select",
-                label: "Legacy Select",
-                identifier: "test-select",
-                selectText: "Option-1\nOption-2",
-                required: false,
-              },
-              {
-                id: selectFieldUuid,
-                type: "select",
-                label: "Select",
-                identifier: "test-select-new-format",
-                options: [
-                  {
-                    id: selectOption1Uuid,
-                    label: "Option-1",
-                  },
-                  {
-                    id: selectOption2Uuid,
-                    label: "Option-2",
-                  },
-                ],
-                required: false,
-              },
-            ],
-            user: {
-              connect: {
-                id: _user.id,
-              },
-            },
-            name: seededForm.name,
-          },
-        });
-      }
       const user = await prisma.user.findUniqueOrThrow({
         where: { id: _user.id },
         include: userIncludes,
       });
+
+      // Enable feature flags for the user if specified
+      // Default to DEFAULT_USER_FEATURE_FLAGS if not specified
+      const userFeatureFlags = opts?.userFeatureFlags ?? DEFAULT_USER_FEATURE_FLAGS;
+      if (userFeatureFlags.length > 0) {
+        const featuresRepository = new FeaturesRepository(prisma);
+        await Promise.all(
+          userFeatureFlags.map((featureFlag) =>
+            featuresRepository.setUserFeatureState({
+              userId: user.id,
+              featureId: featureFlag as FeatureId,
+              state: "enabled",
+              assignedBy: "e2e-fixture",
+            })
+          )
+        );
+      }
+
       if (scenario.hasTeam) {
         const numberOfTeams = scenario.numberOfTeams || 1;
         for (let i = 0; i < numberOfTeams; i++) {
+          // Determine feature flags to use
+          const featureFlags = scenario.teamFeatureFlags ?? DEFAULT_TEAM_FEATURE_FLAGS;
+
           const team = await createTeamAndAddUser(
             {
               user: {
@@ -551,10 +462,13 @@ export const createUsersFixture = (
               orgRequestedSlug: scenario.orgRequestedSlug,
               schedulingType: scenario.schedulingType,
               assignAllTeamMembersForSubTeamEvents: scenario.assignAllTeamMembersForSubTeamEvents,
+              teamSlug: scenario?.teamSlug,
+              teamFeatureFlags: featureFlags,
             },
             workerInfo
           );
           store.teams.push(team);
+
           const teamEvent = await createTeamEventType(user, team, scenario);
           if (scenario.teammates) {
             // Create Teammate users
@@ -664,7 +578,94 @@ export const createUsersFixture = (
           }
         }
       }
-      const userFixture = createUserFixture(user, store.page);
+
+      if (scenario.seedRoutingForms) {
+        const firstTeamMembership = await prisma.membership.findFirstOrThrow({
+          where: {
+            userId: _user.id,
+            team: {
+              isOrganization: false,
+            },
+          },
+        });
+        if (!firstTeamMembership) {
+          throw new Error("No sub-team created");
+        }
+        await createRoutingForm({
+          userId: _user.id,
+          teamId: firstTeamMembership.teamId,
+          formType: scenario.seedRoutingFormWithAttributeRouting ? "attributeRouting" : "default",
+          ...(scenario.seedRoutingFormWithAttributeRouting && {
+            attributeRouting: {
+              attributes: [
+                {
+                  name: "Department",
+                  type: "SINGLE_SELECT" as const,
+                  options: ["Engineering", "Sales", "Marketing", "Product", "Design"],
+                },
+                {
+                  name: "Location",
+                  type: "SINGLE_SELECT" as const,
+                  options: ["New York", "London", "Tokyo", "Berlin", "Remote"],
+                },
+                {
+                  name: "Skills",
+                  type: "MULTI_SELECT" as const,
+                  options: ["JavaScript", "React", "Node.js", "Python", "Design", "Sales"],
+                },
+                {
+                  name: "Years of Experience",
+                  type: "NUMBER" as const,
+                },
+                {
+                  name: "Bio",
+                  type: "TEXT" as const,
+                },
+              ],
+              assignments: [
+                {
+                  memberIndex: 0,
+                  attributeValues: {
+                    Location: ["New York"],
+                    Skills: ["JavaScript"],
+                  },
+                },
+                {
+                  memberIndex: 1,
+                  attributeValues: {
+                    Location: ["London"],
+                    Skills: ["React", "JavaScript"],
+                  },
+                },
+              ],
+              teamEvents: [
+                {
+                  title: "Team Sales",
+                  slug: "team-sales",
+                  schedulingType: "ROUND_ROBIN",
+                  assignAllTeamMembers: true,
+                  length: 60,
+                  description: "Team Sales",
+                },
+                {
+                  title: "Team Javascript",
+                  slug: "team-javascript",
+                  schedulingType: "ROUND_ROBIN",
+                  assignAllTeamMembers: true,
+                  length: 60,
+                  description: "Team Javascript",
+                },
+              ],
+            },
+          }),
+        });
+      }
+
+      const finalUser = await prisma.user.findUniqueOrThrow({
+        where: { id: user.id },
+        include: userIncludes,
+      });
+      const userFixture = createUserFixture(finalUser, store.page);
       store.users.push(userFixture);
       return userFixture;
     },
@@ -681,9 +682,16 @@ export const createUsersFixture = (
     get: () => store.users,
     logout: async () => {
       await page.goto("/auth/logout");
+      const logoutBtn = page.getByTestId("logout-btn");
+      await expect(logoutBtn).toHaveText("Go back to the login page");
+      await page.reload();
+      await expect(logoutBtn).toHaveText("Go back to the login page");
     },
     deleteAll: async () => {
       const ids = store.users.map((u) => u.id);
+      const trackedEmails = store.trackedEmails.map((e) => e.email);
+      const teamIds = store.teams.map((org) => org.id);
+
       if (emails) {
         const emailMessageIds: string[] = [];
         for (const user of store.trackedEmails.concat(store.users.map((u) => ({ email: u.email })))) {
@@ -699,11 +707,22 @@ export const createUsersFixture = (
         }
       }
 
-      await prisma.user.deleteMany({ where: { id: { in: ids } } });
-      // Delete all users that were tracked by email(if they were created)
-      await prisma.user.deleteMany({ where: { email: { in: store.trackedEmails.map((e) => e.email) } } });
-      await prisma.team.deleteMany({ where: { id: { in: store.teams.map((org) => org.id) } } });
-      await prisma.secondaryEmail.deleteMany({ where: { userId: { in: ids } } });
+      // Run clean-up in a single transaction to avoid lock ordering deadlocks
+      await prisma.$transaction(async (tx) => {
+        if (ids.length > 0) {
+          await tx.secondaryEmail.deleteMany({ where: { userId: { in: ids } } });
+          await tx.user.deleteMany({ where: { id: { in: ids } } });
+        }
+
+        if (trackedEmails.length > 0) {
+          await tx.user.deleteMany({ where: { email: { in: trackedEmails } } });
+        }
+
+        if (teamIds.length > 0) {
+          await tx.team.deleteMany({ where: { id: { in: teamIds } } });
+        }
+      });
+
       store.users = [];
       store.teams = [];
       store.trackedEmails = [];
@@ -741,7 +760,6 @@ const createUserFixture = (user: UserWithIncludes, page: Page) => {
 
   // self is a reflective method that return the Prisma object that references this fixture.
   const self = async () =>
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     (await prisma.user.findUnique({
       where: { id: store.user.id },
       include: { eventTypes: true },
@@ -754,8 +772,8 @@ const createUserFixture = (user: UserWithIncludes, page: Page) => {
     eventTypes: user.eventTypes,
     routingForms: user.routingForms,
     self,
-    apiLogin: async (password?: string) =>
-      apiLogin({ ...(await self()), password: password || user.username }, store.page),
+    apiLogin: async (navigateToUrl?: string, password?: string) =>
+      apiLogin({ ...(await self()), password: password || user.username }, store.page, navigateToUrl),
     /** Don't forget to close context at the end */
     apiLoginOnNewBrowser: async (browser: Browser, password?: string) => {
       const newContext = await browser.newContext();
@@ -768,13 +786,24 @@ const createUserFixture = (user: UserWithIncludes, page: Page) => {
      * @deprecated use apiLogin instead
      */
     login: async () => login({ ...(await self()), password: user.username }, store.page),
+    loginOnNewBrowser: async (browser: Browser) => {
+      const newContext = await browser.newContext();
+      const newPage = await newContext.newPage();
+      await login({ ...(await self()), password: user.username }, newPage);
+      // Don't forget to: newContext.close();
+      return [newContext, newPage] as const;
+    },
     logout: async () => {
       await page.goto("/auth/logout");
+      const logoutBtn = page.getByTestId("logout-btn");
+      await expect(logoutBtn).toHaveText("Go back to the login page");
+      await page.reload();
+      await expect(logoutBtn).toHaveText("Go back to the login page");
     },
     getFirstTeamMembership: async () => {
       const memberships = await prisma.membership.findMany({
         where: { userId: user.id },
-        include: { team: true },
+        include: { team: true, user: true },
       });
 
       const membership = memberships
@@ -792,6 +821,31 @@ const createUserFixture = (user: UserWithIncludes, page: Page) => {
         throw new Error("No team found for user");
       }
       return membership;
+    },
+    getAllTeamMembership: async () => {
+      const memberships = await prisma.membership.findMany({
+        where: {
+          userId: user.id,
+          team: {
+            isOrganization: false,
+          },
+        },
+        include: { team: true, user: true },
+      });
+
+      const filteredMemberships = memberships.map((membership) => ({
+        ...membership,
+        team: {
+          ...membership.team,
+          metadata: teamMetadataSchema.parse(membership.team.metadata),
+        },
+      }));
+
+      if (filteredMemberships.length === 0) {
+        throw new Error("No team memberships found for user");
+      }
+
+      return filteredMemberships;
     },
     getOrgMembership: async () => {
       const membership = await prisma.membership.findFirstOrThrow({
@@ -842,9 +896,9 @@ const createUserFixture = (user: UserWithIncludes, page: Page) => {
         },
       });
     },
-    setupEventWithPrice: async (eventType: Pick<Prisma.EventType, "id">, slug: string) =>
+    setupEventWithPrice: async (eventType: Pick<EventType, "id">, slug: string) =>
       setupEventWithPrice(eventType, slug, store.page),
-    bookAndPayEvent: async (eventType: Pick<Prisma.EventType, "slug">) =>
+    bookAndPayEvent: async (eventType: Pick<EventType, "slug">) =>
       bookAndPayEvent(user, eventType, store.page),
     makePaymentUsingStripe: async () => makePaymentUsingStripe(store.page),
     installStripePersonal: async (params: InstallStripeParamsUnion) =>
@@ -870,11 +924,11 @@ const createUserFixture = (user: UserWithIncludes, page: Page) => {
   };
 };
 
-type SupportedTestEventTypes = PrismaType.EventTypeCreateInput & {
-  _bookings?: PrismaType.BookingCreateInput[];
+type SupportedTestEventTypes = Prisma.EventTypeCreateInput & {
+  _bookings?: Prisma.BookingCreateInput[];
 };
 
-type SupportedTestWorkflows = PrismaType.WorkflowCreateInput;
+type SupportedTestWorkflows = Prisma.WorkflowCreateInput;
 
 type CustomUserOptsKeys =
   | "username"
@@ -887,7 +941,7 @@ type CustomUserOptsKeys =
   | "disableImpersonation"
   | "role"
   | "identityProvider";
-type CustomUserOpts = Partial<Pick<Prisma.User, CustomUserOptsKeys>> & {
+type CustomUserOpts = Partial<Pick<User, CustomUserOptsKeys>> & {
   timeZone?: TimeZoneEnum;
   eventTypes?: SupportedTestEventTypes[];
   workflows?: SupportedTestWorkflows[];
@@ -908,7 +962,7 @@ const createUser = (
         organizationId?: number | null;
       })
     | null
-): PrismaType.UserUncheckedCreateInput => {
+): Prisma.UserUncheckedCreateInput => {
   const suffixToMakeUsernameUnique = `-${workerInfo.workerIndex}-${Date.now()}`;
   // build a unique name for our user
   const uname =
@@ -1034,7 +1088,7 @@ async function confirmPendingPayment(page: Page) {
 
 // login using a replay of an E2E routine.
 export async function login(
-  user: Pick<Prisma.User, "username"> & Partial<Pick<Prisma.User, "email">> & { password?: string | null },
+  user: Pick<User, "username"> & Partial<Pick<User, "email">> & { password?: string | null },
   page: Page
 ) {
   // get locators
@@ -1048,7 +1102,7 @@ export async function login(
   await page.waitForSelector("text=Welcome back");
 
   await emailLocator.fill(user.email ?? `${user.username}@example.com`);
-  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+
   await passwordLocator.fill(user.password ?? user.username!);
 
   // waiting for specific login request to resolve
@@ -1057,16 +1111,52 @@ export async function login(
   await responsePromise;
 }
 
+/**
+ * Helper to retry network requests that may fail with transient errors like ECONNRESET
+ */
+async function retryOnNetworkError<T>(
+  fn: () => Promise<T>,
+  maxRetries = 3,
+  delayMs = 500
+): Promise<T> {
+  let lastError: Error | undefined;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error as Error;
+      const errorMessage = lastError.message || "";
+      // Only retry on transient network errors
+      const isRetryable =
+        errorMessage.includes("ECONNRESET") ||
+        errorMessage.includes("ECONNREFUSED") ||
+        errorMessage.includes("ETIMEDOUT") ||
+        errorMessage.includes("socket hang up");
+
+      if (!isRetryable || attempt === maxRetries) {
+        throw lastError;
+      }
+      // Wait before retrying with exponential backoff
+      await new Promise((resolve) => setTimeout(resolve, delayMs * attempt));
+    }
+  }
+  throw lastError;
+}
+
 export async function apiLogin(
-  user: Pick<Prisma.User, "username"> & Partial<Pick<Prisma.User, "email">> & { password: string | null },
-  page: Page
+  user: Pick<User, "username"> & Partial<Pick<User, "email">> & { password: string | null },
+  page: Page,
+  navigateToUrl?: string
 ) {
-  const csrfToken = await page
-    .context()
-    .request.get("/api/auth/csrf")
-    .then((response) => response.json())
-    .then((json) => json.csrfToken);
-  const data = {
+  // Get CSRF token with retry for transient network errors
+  const csrfToken = await retryOnNetworkError(async () => {
+    const response = await page.context().request.get("/api/auth/csrf");
+    const json = await response.json();
+    return json.csrfToken;
+  });
+
+  // Make the login request
+  const loginData = {
     email: user.email ?? `${user.username}@example.com`,
     password: user.password ?? user.username,
     callbackURL: WEBAPP_URL,
@@ -1074,12 +1164,34 @@ export async function apiLogin(
     json: "true",
     csrfToken,
   };
-  return page.context().request.post("/api/auth/callback/credentials", {
-    data,
-  });
+
+  const response = await retryOnNetworkError(() =>
+    page.context().request.post("/api/auth/callback/credentials", {
+      data: loginData,
+    })
+  );
+
+  expect(response.status()).toBe(200);
+
+  /**
+   * Critical: Navigate to a protected page to trigger NextAuth session loading
+   * This forces NextAuth to run the jwt and session callbacks that populate
+   * the session with profile, org, and other important data
+   */
+  await page.goto(navigateToUrl || "/e2e/session-warmup");
+
+  // Wait for the session API call to complete to ensure session is fully established
+  // Only wait if we're on a protected page that would trigger the session API call
+  try {
+    await page.waitForResponse("/api/auth/session", { timeout: 2000 });
+  } catch {
+    // Session API call not made (likely on a public page), continue anyway
+  }
+
+  return response;
 }
 
-export async function setupEventWithPrice(eventType: Pick<Prisma.EventType, "id">, slug: string, page: Page) {
+export async function setupEventWithPrice(eventType: Pick<EventType, "id">, slug: string, page: Page) {
   await page.goto(`/event-types/${eventType?.id}?tabName=apps`);
   await page.locator(`[data-testid='${slug}-app-switch']`).first().click();
   await page.getByPlaceholder("Price").fill("100");
@@ -1087,8 +1199,8 @@ export async function setupEventWithPrice(eventType: Pick<Prisma.EventType, "id"
 }
 
 export async function bookAndPayEvent(
-  user: Pick<Prisma.User, "username">,
-  eventType: Pick<Prisma.EventType, "slug">,
+  user: Pick<User, "username">,
+  eventType: Pick<EventType, "slug">,
   page: Page
 ) {
   // booking process with stripe integration

@@ -3,12 +3,16 @@ import { vi } from "vitest";
 const setCredentialsMock = vi.fn();
 const freebusyQueryMock = vi.fn();
 const calendarListMock = vi.fn();
+const calendarsGetMock = vi.fn();
 const calendarMockImplementation = {
   channels: {
     stop: vi.fn().mockResolvedValue(undefined),
   },
   calendarList: {
     list: calendarListMock,
+  },
+  calendars: {
+    get: calendarsGetMock,
   },
   events: {
     watch: vi.fn().mockResolvedValue({
@@ -28,7 +32,7 @@ const calendarMockImplementation = {
 
 const calendarMock = {
   calendar_v3: {
-    Calendar: vi.fn().mockImplementation(() => calendarMockImplementation),
+    Calendar: vi.fn().mockImplementation(function() { return calendarMockImplementation; }),
   },
 };
 const adminMock = {
@@ -84,7 +88,7 @@ vi.mock("googleapis-common", async () => {
   const actual = await vi.importActual("googleapis-common");
   return {
     ...actual,
-    OAuth2Client: vi.fn().mockImplementation((...args: [string, string, string]) => {
+    OAuth2Client: vi.fn().mockImplementation(function(...args: [string, string, string]) {
       lastCreatedOAuth2Client = {
         type: "oauth2",
         args,
@@ -100,7 +104,7 @@ vi.mock("googleapis-common", async () => {
       };
       return lastCreatedOAuth2Client;
     }),
-    JWT: vi.fn().mockImplementation((config: MockJWT["config"]) => {
+    JWT: vi.fn().mockImplementation(function(config: MockJWT["config"]) {
       lastCreatedJWT = {
         type: "jwt",
         config,

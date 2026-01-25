@@ -21,16 +21,22 @@ test.describe("Team", () => {
     const teamOwner = await users.create(undefined, { hasTeam: true });
     const { team } = await teamOwner.getFirstTeamMembership();
     await teamOwner.apiLogin();
-    await page.goto(`/settings/teams/${team.id}/members`);
+    await page.goto(`/settings/teams/${team.id}/settings`);
 
     await test.step("To the team by email (external user)", async () => {
       const invitedUserEmail = users.trackEmail({
         username: "rick",
         domain: `domain-${Date.now()}.com`,
       });
+      await page.goto(`/settings/teams/${team.id}/members`);
+      await page.waitForLoadState("domcontentloaded");
+      await page.waitForTimeout(500); // Add a small delay to ensure UI is fully loaded
       await page.getByTestId("new-member-button").click();
       await page.locator('input[name="inviteUser"]').fill(invitedUserEmail);
-      await page.getByText(t("send_invite")).click();
+      const submitPromise = page.waitForResponse("/api/trpc/teams/inviteMember?batch=1");
+      await page.getByTestId("invite-new-member-button").click();
+      const response = await submitPromise;
+      expect(response.status()).toBe(200);
       const inviteLink = await expectInvitationEmailToBeReceived(
         page,
         emails,
@@ -44,8 +50,7 @@ test.describe("Team", () => {
         page.locator(`[data-testid="email-${invitedUserEmail.replace("@", "")}-pending"]`)
       ).toHaveCount(1);
 
-      // eslint-disable-next-line playwright/no-conditional-in-test
-      if (!inviteLink) return null;
+      expect(inviteLink).toBeTruthy();
 
       // Follow invite link to new window
       const context = await browser.newContext();
@@ -66,10 +71,10 @@ test.describe("Team", () => {
 
       // Check newly invited member is not pending anymore
       await page.bringToFront();
-      await page.goto(`/settings/teams/${team.id}/members`);
+      await page.goto(`/settings/teams/${team.id}/settings`);
       await expect(
         page.locator(`[data-testid="email-${invitedUserEmail.replace("@", "")}-pending"]`)
-      ).toHaveCount(0);
+      ).toHaveCount(0, { timeout: 0 });
     });
 
     await test.step("To the team by invite link", async () => {
@@ -78,13 +83,16 @@ test.describe("Team", () => {
         password: "P4ssw0rd!",
       });
 
+      await page.goto(`/settings/teams/${team.id}/members`);
+      await page.waitForLoadState("domcontentloaded");
+      await page.waitForTimeout(500); // Add a small delay to ensure UI is fully loaded
       await page.getByTestId("new-member-button").click();
       const inviteLink = await getInviteLink(page);
 
       const context = await browser.newContext();
       const inviteLinkPage = await context.newPage();
       await inviteLinkPage.goto(inviteLink);
-      await inviteLinkPage.waitForLoadState("domcontentloaded");
+      await inviteLinkPage.waitForTimeout(3000);
 
       await inviteLinkPage.locator("button[type=submit]").click();
       await expect(inviteLinkPage.locator('[data-testid="field-error"]')).toHaveCount(2);
@@ -97,21 +105,27 @@ test.describe("Team", () => {
     });
   });
 
-  test("Invitation (verified)", async ({ browser, page, users, emails }) => {
+  test("Invitation (verified)", async ({ page, users, emails }) => {
     const t = await localize("en");
     const teamOwner = await users.create({ name: `team-owner-${Date.now()}` }, { hasTeam: true });
     const { team } = await teamOwner.getFirstTeamMembership();
     await teamOwner.apiLogin();
-    await page.goto(`/settings/teams/${team.id}/members`);
+    await page.goto(`/settings/teams/${team.id}/settings`);
 
     await test.step("To the organization by email (internal user)", async () => {
       const invitedUserEmail = users.trackEmail({
         username: "rick",
         domain: `example.com`,
       });
+      await page.goto(`/settings/teams/${team.id}/members`);
+      await page.waitForLoadState("domcontentloaded");
+      await page.waitForTimeout(500); // Add a small delay to ensure UI is fully loaded
       await page.getByTestId("new-member-button").click();
       await page.locator('input[name="inviteUser"]').fill(invitedUserEmail);
-      await page.getByText(t("send_invite")).click();
+      const submitPromise = page.waitForResponse("/api/trpc/teams/inviteMember?batch=1");
+      await page.getByTestId("invite-new-member-button").click();
+      const response = await submitPromise;
+      expect(response.status()).toBe(200);
       await expectInvitationEmailToBeReceived(
         page,
         emails,
@@ -153,16 +167,23 @@ test.describe("Team", () => {
     const { team } = await teamOwner.getFirstTeamMembership();
 
     await teamOwner.apiLogin();
+    await page.goto(`/settings/teams/${team.id}/settings`);
     await page.goto(`/settings/teams/${team.id}/members`);
+    await page.waitForLoadState("domcontentloaded");
+    await page.waitForTimeout(500); // Add a small delay to ensure UI is fully loaded
     await page.getByTestId("new-member-button").click();
     await page.locator('input[name="inviteUser"]').fill(invitedMember.email);
-    await page.getByText(t("send_invite")).click();
+    const submitPromise = page.waitForResponse("/api/trpc/teams/inviteMember?batch=1");
+    await page.getByTestId("invite-new-member-button").click();
+    const response = await submitPromise;
+    expect(response.status()).toBe(200);
 
     await invitedMember.apiLogin();
     await page.goto(`/teams`);
-    await page.getByTestId(`accept-invitation-${team.id}`).click();
-    const response = await page.waitForResponse("/api/trpc/teams/acceptOrLeave?batch=1");
-    expect(response.status()).toBe(200);
+    const response2Promise = page.waitForResponse("/api/trpc/teams/acceptOrLeave?batch=1");
+    await page.getByTestId(`accept-invitation-${team.id}`).first().click();
+    const response2 = await response2Promise;
+    expect(response2.status()).toBe(200);
     await page.goto(`/event-types`);
 
     //ensure managed event-type is created for the invited member
@@ -179,5 +200,135 @@ test.describe("Team", () => {
       },
     });
     expect(parentEventType?.children.find((et) => et.userId === invitedMember.id)).toBeTruthy();
+  });
+
+  test("Auto-accept invitation for existing user", async ({ browser, page, users, emails }) => {
+    const t = await localize("en");
+    const teamOwner = await users.create({ name: "Invited User" }, { hasTeam: true });
+    const { team } = await teamOwner.getFirstTeamMembership();
+    const invitedUser = await users.create({
+      email: `invited-user-${Date.now()}@example.com`,
+      name: "Invited User",
+    });
+
+    await teamOwner.apiLogin();
+    await page.goto(`/settings/teams/${team.id}/members`);
+
+    let inviteLink: string;
+
+    await test.step("Send invitation to existing user", async () => {
+      await page.waitForLoadState("domcontentloaded");
+      await page.waitForTimeout(500);
+      await page.getByTestId("new-member-button").click();
+      await page.locator('input[name="inviteUser"]').fill(invitedUser.email);
+      const submitPromise = page.waitForResponse("/api/trpc/teams/inviteMember?batch=1");
+      await page.getByTestId("invite-new-member-button").click();
+      const response = await submitPromise;
+      expect(response.status()).toBe(200);
+
+      inviteLink = await expectInvitationEmailToBeReceived(
+        page,
+        emails,
+        invitedUser.email,
+        `${teamOwner.name} invited you to join the team ${team.name} on Cal.com`,
+        "teams?token"
+      );
+
+      expect(inviteLink).toContain("autoAccept=true");
+
+      const membership = await prisma.membership.findFirst({
+        where: {
+          userId: invitedUser.id,
+          teamId: team.id,
+        },
+      });
+      expect(membership?.accepted).toBe(false);
+    });
+
+    await test.step("Auto-accept invitation by clicking link", async () => {
+      const [secondContext, secondPage] = await invitedUser.apiLoginOnNewBrowser(browser);
+
+      await secondPage.goto(inviteLink);
+
+      await expect(secondPage.getByText("Successfully joined")).toBeVisible();
+
+      const membership = await prisma.membership.findFirst({
+        where: {
+          userId: invitedUser.id,
+          teamId: team.id,
+        },
+      });
+      expect(membership?.accepted).toBe(true);
+
+      await secondPage.close();
+      await secondContext.close();
+    });
+  });
+
+  test("Error when wrong user tries to use invitation link", async ({ browser, page, users, emails }) => {
+    const t = await localize("en");
+    const teamOwner = await users.create({ name: "Wrong User" }, { hasTeam: true });
+    const { team } = await teamOwner.getFirstTeamMembership();
+    const invitedUser = await users.create({
+      email: `invited-user-${Date.now()}@example.com`,
+      name: "Invited User",
+    });
+    const wrongUser = await users.create({
+      email: `wrong-user-${Date.now()}@example.com`,
+      name: "Wrong User",
+    });
+
+    await teamOwner.apiLogin();
+    await page.goto(`/settings/teams/${team.id}/members`);
+
+    let inviteLink: string;
+
+    await test.step("Send invitation to specific user", async () => {
+      await page.waitForLoadState("domcontentloaded");
+      await page.waitForTimeout(500);
+      await page.getByTestId("new-member-button").click();
+      await page.locator('input[name="inviteUser"]').fill(invitedUser.email);
+      const submitPromise = page.waitForResponse("/api/trpc/teams/inviteMember?batch=1");
+      await page.getByTestId("invite-new-member-button").click();
+      const response = await submitPromise;
+      expect(response.status()).toBe(200);
+
+      inviteLink = await expectInvitationEmailToBeReceived(
+        page,
+        emails,
+        invitedUser.email,
+        `${teamOwner.name} invited you to join the team ${team.name} on Cal.com`,
+        "teams?token"
+      );
+
+      expect(inviteLink).toContain("autoAccept=true");
+    });
+
+    await test.step("Wrong user tries to use invitation link", async () => {
+      const [secondContext, secondPage] = await wrongUser.apiLoginOnNewBrowser(browser);
+
+      await secondPage.goto(inviteLink);
+
+      await expect(secondPage.getByText("This invitation is not for your account")).toBeVisible();
+
+      const membership = await prisma.membership.findFirst({
+        where: {
+          userId: wrongUser.id,
+          teamId: team.id,
+        },
+      });
+      expect(membership).toBeNull();
+
+      const invitedMembership = await prisma.membership.findFirst({
+        where: {
+          userId: invitedUser.id,
+          teamId: team.id,
+        },
+      });
+      expect(invitedMembership?.accepted).toBe(false);
+
+      await secondPage.close();
+      await secondContext.close();
+    });
   });
 });

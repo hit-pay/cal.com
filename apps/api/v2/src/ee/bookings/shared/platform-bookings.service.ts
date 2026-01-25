@@ -4,7 +4,7 @@ import { OAuthClientUsersService } from "@/modules/oauth-clients/services/oauth-
 import { UsersRepository } from "@/modules/users/users.repository";
 import { Injectable } from "@nestjs/common";
 
-import { PlatformOAuthClient } from "@calcom/prisma/client";
+import type { PlatformOAuthClient } from "@calcom/prisma/client";
 
 @Injectable()
 export class PlatformBookingsService {
@@ -54,6 +54,7 @@ export class PlatformBookingsService {
         platformRescheduleUrl: oAuthClient.bookingRescheduleRedirectUri,
         platformBookingUrl: oAuthClient.bookingRedirectUri,
         arePlatformEmailsEnabled: oAuthClient.areEmailsEnabled,
+        areCalendarEventsEnabled: oAuthClient.areCalendarEventsEnabled,
       };
     }
 
@@ -78,6 +79,7 @@ export class PlatformBookingsService {
         platformRescheduleUrl: oAuthClient.bookingRescheduleRedirectUri,
         platformBookingUrl: oAuthClient.bookingRedirectUri,
         arePlatformEmailsEnabled: oAuthClient.areEmailsEnabled,
+        areCalendarEventsEnabled: oAuthClient.areCalendarEventsEnabled,
       };
     }
 

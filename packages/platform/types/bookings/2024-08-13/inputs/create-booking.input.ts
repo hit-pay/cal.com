@@ -1,5 +1,11 @@
-import { ApiExtraModels, ApiProperty, ApiPropertyOptional, getSchemaPath } from "@nestjs/swagger";
-import { Type } from "class-transformer";
+import {
+  ApiExtraModels,
+  ApiHideProperty,
+  ApiProperty,
+  ApiPropertyOptional,
+  getSchemaPath,
+} from "@nestjs/swagger";
+import { Transform, Type } from "class-transformer";
 import type { ValidationArguments, ValidationOptions } from "class-validator";
 import {
   IsInt,
@@ -19,7 +25,7 @@ import {
   Validate,
   IsDefined,
 } from "class-validator";
-import { isValidPhoneNumber } from "libphonenumber-js";
+import { isValidPhoneNumber } from "libphonenumber-js/max";
 
 import type { BookingLanguageType } from "./language";
 import { BookingLanguage } from "./language";
@@ -80,7 +86,7 @@ function RequireEmailOrPhone(validationOptions?: ValidationOptions) {
       constraints: [],
       validator: {
         validate(_: unknown, args: ValidationArguments) {
-          const obj = args.object as Attendee;
+          const obj = args.object as CreateBookingAttendee;
 
           const hasPhoneNumber = !!obj.phoneNumber;
           const hasEmail = !!obj.email;
@@ -95,7 +101,7 @@ function RequireEmailOrPhone(validationOptions?: ValidationOptions) {
 }
 
 @RequireEmailOrPhone()
-class Attendee {
+class CreateBookingAttendee {
   @ApiProperty({
     type: String,
     description: "The name of the attendee.",
@@ -145,6 +151,61 @@ class Attendee {
   language?: BookingLanguageType;
 }
 
+class Routing {
+  @ApiProperty({
+    type: Number,
+    description: "The ID of the routing form response that determined this booking assignment.",
+    example: 123,
+  })
+  @IsInt()
+  responseId!: number;
+
+  @ApiProperty({
+    type: [Number],
+    description: "Array of team member IDs that were routed to handle this booking.",
+    example: [101, 102],
+  })
+  @IsArray()
+  @IsInt({ each: true })
+  teamMemberIds!: number[];
+
+  @ApiPropertyOptional({
+    type: String,
+    description: "The email of the team member assigned to handle this booking.",
+    example: "john.doe@example.com",
+  })
+  @IsString()
+  @IsOptional()
+  teamMemberEmail?: string;
+
+  @ApiPropertyOptional({
+    type: Boolean,
+    description: "Whether to skip contact owner assignment from CRM integration.",
+    example: true,
+  })
+  @IsBoolean()
+  @IsOptional()
+  skipContactOwner?: boolean;
+
+  @ApiPropertyOptional({
+    type: String,
+    description: "The CRM application slug for integration.",
+    example: "salesforce",
+  })
+  @IsString()
+  @IsOptional()
+  crmAppSlug?: string;
+
+  @ApiPropertyOptional({
+    type: String,
+    description: "The CRM owner record type for contact assignment.",
+    example: "Account",
+  })
+  @IsString()
+  @IsOptional()
+  crmOwnerRecordType?: string;
+}
+
 @ApiExtraModels(
   BookingInputAddressLocation_2024_08_13,
   BookingInputAttendeeAddressLocation_2024_08_13,
@@ -167,13 +228,13 @@ export class CreateBookingInput_2024_08_13 {
   start!: string;
 
   @ApiProperty({
-    type: Attendee,
+    type: CreateBookingAttendee,
     description: "The attendee's details.",
   })
   @IsDefined()
   @ValidateNested()
-  @Type(() => Attendee)
-  attendee!: Attendee;
+  @Type(() => CreateBookingAttendee)
+  attendee!: CreateBookingAttendee;
 
   @ApiPropertyOptional({
     type: Object,
@@ -184,6 +245,14 @@ export class CreateBookingInput_2024_08_13 {
   })
   @IsObject()
   @IsOptional()
+  @Transform(({ value }) => {
+    if (!value || typeof value !== "object") return value;
+    const transformed: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(value)) {
+      transformed[key] = val === null ? "" : val;
+    }
+    return transformed;
+  })
   bookingFieldsResponses?: Record<string, unknown>;
 
   @ApiPropertyOptional({
@@ -302,6 +371,41 @@ export class CreateBookingInput_2024_08_13 {
     If not provided then event type default length will be used for the booking.`,
   })
   lengthInMinutes?: number;
+
+  @ApiPropertyOptional({
+    type: Routing,
+    description:
+      "Routing information from routing forms that determined the booking assignment. Both responseId and teamMemberIds are required if provided.",
+    example: {
+      responseId: 123,
+      teamMemberIds: [101, 102],
+    },
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => Routing)
+  routing?: Routing;
+
+  @ApiPropertyOptional({
+    type: String,
+    description: "Email verification code required when event type has email verification enabled.",
+    example: "123456",
+  })
+  @IsOptional()
+  @IsString()
+  emailVerificationCode?: string;
+
+  /* @ApiPropertyOptional({
+    type: [Number],
+    description:
+      "For round robin event types, filter available hosts to only consider the specified subset of host user IDs. This allows you to book with specific hosts within a round robin event type.",
+    example: [1, 2, 3],
+  }) */
+  @ApiHideProperty()
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  rrHostSubsetIds?: number[];
 }
 
 export class CreateInstantBookingInput_2024_08_13 extends CreateBookingInput_2024_08_13 {

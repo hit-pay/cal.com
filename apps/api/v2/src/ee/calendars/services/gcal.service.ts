@@ -1,4 +1,5 @@
 import { OAuthCalendarApp } from "@/ee/calendars/calendars.interface";
+import type { CalendarState } from "@/ee/calendars/controllers/calendars.controller";
 import { CalendarsService } from "@/ee/calendars/services/calendars.service";
 import { AppsRepository } from "@/modules/apps/apps.repository";
 import { CredentialsRepository } from "@/modules/credentials/credentials.repository";
@@ -9,12 +10,12 @@ import { Logger, NotFoundException } from "@nestjs/common";
 import { BadRequestException, UnauthorizedException } from "@nestjs/common";
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { Prisma } from "@prisma/client";
 import { Request } from "express";
 import { OAuth2Client } from "googleapis-common";
 import { z } from "zod";
 
 import { SUCCESS_STATUS, GOOGLE_CALENDAR_TYPE } from "@calcom/platform-constants";
+import { Prisma } from "@calcom/prisma/client";
 
 const CALENDAR_SCOPES = [
   "https://www.googleapis.com/auth/calendar.readonly",
@@ -23,7 +24,7 @@ const CALENDAR_SCOPES = [
 
 @Injectable()
 export class GoogleCalendarService implements OAuthCalendarApp {
-  private redirectUri = `${this.config.get("api.url")}/gcal/oauth/save`;
+  public readonly redirectUri = `${this.config.get("api.url")}/gcal/oauth/save`;
   private gcalResponseSchema = z.object({ client_id: z.string(), client_secret: z.string() });
   private logger = new Logger("GcalService");
 
@@ -65,12 +66,18 @@ export class GoogleCalendarService implements OAuthCalendarApp {
 
   async getCalendarRedirectUrl(accessToken: string, origin: string, redir?: string, isDryRun?: boolean) {
     const oAuth2Client = await this.getOAuthClient(this.redirectUri);
+    const state: CalendarState = {
+      accessToken,
+      origin,
+      redir,
+      isDryRun,
+    };
 
     const authUrl = oAuth2Client.generateAuthUrl({
       access_type: "offline",
       scope: CALENDAR_SCOPES,
       prompt: "consent",
-      state: `accessToken=${accessToken}&origin=${origin}&redir=${redir ?? ""}&isDryRun=${isDryRun}`,
+      state: JSON.stringify(state),
     });
 
     return authUrl;

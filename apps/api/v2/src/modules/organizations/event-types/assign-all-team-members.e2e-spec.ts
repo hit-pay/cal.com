@@ -1,5 +1,27 @@
-import { bootstrap } from "@/app";
+import { SUCCESS_STATUS, X_CAL_CLIENT_ID, X_CAL_SECRET_KEY } from "@calcom/platform-constants";
+import type {
+  ApiSuccessResponse,
+  CreateTeamEventTypeInput_2024_06_14,
+  Host,
+  OrgTeamOutputDto,
+  TeamEventTypeOutput_2024_06_14,
+  UpdateTeamEventTypeInput_2024_06_14,
+} from "@calcom/platform-types";
+import type { PlatformOAuthClient, Team, User } from "@calcom/prisma/client";
+import { INestApplication } from "@nestjs/common";
+import { NestExpressApplication } from "@nestjs/platform-express";
+import { Test } from "@nestjs/testing";
+import request from "supertest";
+import { EventTypesRepositoryFixture } from "test/fixtures/repository/event-types.repository.fixture";
+import { HostsRepositoryFixture } from "test/fixtures/repository/hosts.repository.fixture";
+import { MembershipRepositoryFixture } from "test/fixtures/repository/membership.repository.fixture";
+import { OAuthClientRepositoryFixture } from "test/fixtures/repository/oauth-client.repository.fixture";
+import { ProfileRepositoryFixture } from "test/fixtures/repository/profiles.repository.fixture";
+import { TeamRepositoryFixture } from "test/fixtures/repository/team.repository.fixture";
+import { UserRepositoryFixture } from "test/fixtures/repository/users.repository.fixture";
+import { randomString } from "test/utils/randomString";
 import { AppModule } from "@/app.module";
+import { bootstrap } from "@/bootstrap";
 import { HttpExceptionFilter } from "@/filters/http-exception.filter";
 import { PrismaExceptionFilter } from "@/filters/prisma-exception.filter";
 import { Locales } from "@/lib/enums/locales";
@@ -13,29 +35,6 @@ import { CreateOrgTeamMembershipDto } from "@/modules/organizations/teams/member
 import { OrgTeamMembershipOutputResponseDto } from "@/modules/organizations/teams/memberships/outputs/organization-teams-memberships.output";
 import { CreateManagedUserInput } from "@/modules/users/inputs/create-managed-user.input";
 import { UsersModule } from "@/modules/users/users.module";
-import { INestApplication } from "@nestjs/common";
-import { NestExpressApplication } from "@nestjs/platform-express";
-import { Test } from "@nestjs/testing";
-import { PlatformOAuthClient, Team, User } from "@prisma/client";
-import * as request from "supertest";
-import { EventTypesRepositoryFixture } from "test/fixtures/repository/event-types.repository.fixture";
-import { HostsRepositoryFixture } from "test/fixtures/repository/hosts.repository.fixture";
-import { MembershipRepositoryFixture } from "test/fixtures/repository/membership.repository.fixture";
-import { OAuthClientRepositoryFixture } from "test/fixtures/repository/oauth-client.repository.fixture";
-import { ProfileRepositoryFixture } from "test/fixtures/repository/profiles.repository.fixture";
-import { TeamRepositoryFixture } from "test/fixtures/repository/team.repository.fixture";
-import { UserRepositoryFixture } from "test/fixtures/repository/users.repository.fixture";
-import { randomString } from "test/utils/randomString";
-
-import { SUCCESS_STATUS, X_CAL_CLIENT_ID, X_CAL_SECRET_KEY } from "@calcom/platform-constants";
-import {
-  ApiSuccessResponse,
-  CreateTeamEventTypeInput_2024_06_14,
-  Host,
-  OrgTeamOutputDto,
-  TeamEventTypeOutput_2024_06_14,
-  UpdateTeamEventTypeInput_2024_06_14,
-} from "@calcom/platform-types";
 
 const CLIENT_REDIRECT_URI = "http://localhost:4321";
 
@@ -257,7 +256,7 @@ describe("Assign all team members", () => {
         slug: `organizations-event-types-round-robin-${randomString()}`,
         lengthInMinutes: 60,
         // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-ignore
+        // @ts-expect-error
         schedulingType: "collective",
       };
 
@@ -285,7 +284,7 @@ describe("Assign all team members", () => {
         slug: `assign-all-team-members-collective-${randomString()}`,
         lengthInMinutes: 60,
         // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-ignore
+        // @ts-expect-error
         schedulingType: "collective",
         assignAllTeamMembers: true,
       };
@@ -304,8 +303,10 @@ describe("Assign all team members", () => {
           expect(data.title).toEqual(body.title);
           expect(data.hosts.length).toEqual(2);
           expect(data.schedulingType).toEqual("collective");
-          evaluateHost({ userId: firstManagedUser.user.id }, data.hosts[0]);
-          evaluateHost({ userId: secondManagedUser.user.id }, data.hosts[1]);
+          const dataFirstHost = data.hosts.find((host) => host.userId === firstManagedUser.user.id);
+          const dataSecondHost = data.hosts.find((host) => host.userId === secondManagedUser.user.id);
+          evaluateHost({ userId: firstManagedUser.user.id }, dataFirstHost);
+          evaluateHost({ userId: secondManagedUser.user.id }, dataSecondHost);
 
           const eventTypeHosts = await hostsRepositoryFixture.getEventTypeHosts(data.id);
           expect(eventTypeHosts.length).toEqual(2);
@@ -322,7 +323,7 @@ describe("Assign all team members", () => {
         slug: `assign-all-team-members-round-robin-${randomString()}`,
         lengthInMinutes: 60,
         // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-ignore
+        // @ts-expect-error
         schedulingType: "roundRobin",
         assignAllTeamMembers: true,
       };
@@ -341,13 +342,15 @@ describe("Assign all team members", () => {
           expect(data.title).toEqual(body.title);
           expect(data.hosts.length).toEqual(2);
           expect(data.schedulingType).toEqual("roundRobin");
+          const dataFirstHost = data.hosts.find((host) => host.userId === firstManagedUser.user.id);
+          const dataSecondHost = data.hosts.find((host) => host.userId === secondManagedUser.user.id);
           evaluateHost(
             { userId: firstManagedUser.user.id, mandatory: false, priority: "medium" },
-            data.hosts[0]
+            dataFirstHost
           );
           evaluateHost(
             { userId: secondManagedUser.user.id, mandatory: false, priority: "medium" },
-            data.hosts[1]
+            dataSecondHost
           );
 
           const eventTypeHosts = await hostsRepositoryFixture.getEventTypeHosts(data.id);
@@ -361,6 +364,28 @@ describe("Assign all team members", () => {
     });
 
     it("should update round robin event type", async () => {
+      if (!roundRobinEventType) {
+        const setupBody: CreateTeamEventTypeInput_2024_06_14 = {
+          title: "Coding consultation round robin",
+          slug: `assign-all-team-members-round-robin-${randomString()}`,
+          lengthInMinutes: 60,
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+          // @ts-expect-error
+          schedulingType: "roundRobin",
+          assignAllTeamMembers: true,
+        };
+
+        const setupResponse = await request(app.getHttpServer())
+          .post(`/v2/organizations/${organization.id}/teams/${managedTeam.id}/event-types`)
+          .send(setupBody)
+          .set(X_CAL_SECRET_KEY, oAuthClient.secret)
+          .set(X_CAL_CLIENT_ID, oAuthClient.id)
+          .expect(201);
+
+        const setupResponseBody: ApiSuccessResponse<TeamEventTypeOutput_2024_06_14> = setupResponse.body;
+        roundRobinEventType = setupResponseBody.data;
+      }
+
       const body: UpdateTeamEventTypeInput_2024_06_14 = {
         title: "Coding consultation round robin updated",
       };
@@ -381,13 +406,15 @@ describe("Assign all team members", () => {
           expect(data.title).toEqual(body.title);
           expect(data.hosts.length).toEqual(2);
           expect(data.schedulingType).toEqual("roundRobin");
+          const dataFirstHost = data.hosts.find((host) => host.userId === firstManagedUser.user.id);
+          const dataSecondHost = data.hosts.find((host) => host.userId === secondManagedUser.user.id);
           evaluateHost(
             { userId: firstManagedUser.user.id, mandatory: false, priority: "medium" },
-            data.hosts[0]
+            dataFirstHost
           );
           evaluateHost(
             { userId: secondManagedUser.user.id, mandatory: false, priority: "medium" },
-            data.hosts[1]
+            dataSecondHost
           );
 
           const eventTypeHosts = await hostsRepositoryFixture.getEventTypeHosts(data.id);
@@ -405,7 +432,7 @@ describe("Assign all team members", () => {
         slug: `assign-all-team-members-managed-${randomString()}`,
         lengthInMinutes: 60,
         // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-ignore
+        // @ts-expect-error
         schedulingType: "managed",
         assignAllTeamMembers: true,
       };
@@ -461,10 +488,17 @@ describe("Assign all team members", () => {
     });
   });
 
-  function evaluateHost(expected: Host, received: Host | undefined) {
-    expect(expected.userId).toEqual(received?.userId);
-    expect(expected.mandatory).toEqual(received?.mandatory);
-    expect(expected.priority).toEqual(received?.priority);
+  function evaluateHost(expected: Partial<Host>, received: Host | undefined) {
+    if (!received) {
+      throw new Error(`Host is undefined. Expected userId: ${expected.userId}`);
+    }
+    expect(expected.userId).toEqual(received.userId);
+    if (expected.mandatory !== undefined) {
+      expect(expected.mandatory).toEqual(received.mandatory);
+    }
+    if (expected.priority !== undefined) {
+      expect(expected.priority).toEqual(received.priority);
+    }
   }
 
   afterAll(async () => {

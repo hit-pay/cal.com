@@ -1,8 +1,12 @@
+import type { NextApiRequest } from "next";
+
 import { generateTeamCheckoutSession } from "@calcom/features/ee/teams/lib/payments";
+import { ProfileRepository } from "@calcom/features/profile/repositories/ProfileRepository";
 import { IS_TEAM_BILLING_ENABLED, WEBAPP_URL } from "@calcom/lib/constants";
 import { uploadLogo } from "@calcom/lib/server/avatar";
-import { ProfileRepository } from "@calcom/lib/server/repository/profile";
 import { resizeBase64Image } from "@calcom/lib/server/resizeBase64Image";
+import { getTrackingFromCookies } from "@calcom/lib/tracking";
+import type { TrackingData } from "@calcom/lib/tracking";
 import { prisma } from "@calcom/prisma";
 import { MembershipRole } from "@calcom/prisma/enums";
 
@@ -14,6 +18,7 @@ import type { TCreateInputSchema } from "./create.schema";
 type CreateOptions = {
   ctx: {
     user: NonNullable<TrpcSessionUser>;
+    req?: NextApiRequest;
   };
   input: TCreateInputSchema;
 };
@@ -22,10 +27,14 @@ const generateCheckoutSession = async ({
   teamSlug,
   teamName,
   userId,
+  isOnboarding,
+  tracking,
 }: {
   teamSlug: string;
   teamName: string;
   userId: number;
+  isOnboarding?: boolean;
+  tracking?: TrackingData;
 }) => {
   if (!IS_TEAM_BILLING_ENABLED) {
     console.info("Team billing is disabled, not generating a checkout session.");
@@ -36,6 +45,8 @@ const generateCheckoutSession = async ({
     teamSlug,
     teamName,
     userId,
+    isOnboarding,
+    tracking,
   });
 
   if (!checkoutSession.url)
@@ -48,7 +59,7 @@ const generateCheckoutSession = async ({
 
 export const createHandler = async ({ ctx, input }: CreateOptions) => {
   const { user } = ctx;
-  const { slug, name } = input;
+  const { slug, name, bio, isOnboarding } = input;
   const isOrgChildTeam = !!user.profile?.organizationId;
 
   // For orgs we want to create teams under the org
@@ -59,7 +70,6 @@ export const createHandler = async ({ ctx, input }: CreateOptions) => {
   const slugCollisions = await prisma.team.findFirst({
     where: {
       slug: slug,
-      // If this is under an org, check that the team doesn't already exist
       parentId: isOrgChildTeam ? user.profile?.organizationId : null,
     },
   });
@@ -77,10 +87,14 @@ export const createHandler = async ({ ctx, input }: CreateOptions) => {
 
   // If the user is not a part of an org, then make them pay before creating the team
   if (!isOrgChildTeam) {
+    const tracking = getTrackingFromCookies(ctx.req?.cookies);
+
     const checkoutSession = await generateCheckoutSession({
       teamSlug: slug,
       teamName: name,
       userId: user.id,
+      isOnboarding,
+      tracking,
     });
 
     // If there is a checkout session, return it. Otherwise, it means it's disabled.
@@ -96,6 +110,7 @@ export const createHandler = async ({ ctx, input }: CreateOptions) => {
     data: {
       slug,
       name,
+      bio: bio || null,
       members: {
         create: {
           userId: ctx.user.id,
@@ -107,7 +122,12 @@ export const createHandler = async ({ ctx, input }: CreateOptions) => {
     },
   });
   // Upload logo, create doesn't allow logo removal
-  if (input.logo && input.logo.startsWith("data:image/png;base64,")) {
+  if (
+    input.logo &&
+    (input.logo.startsWith("data:image/png;base64,") ||
+      input.logo.startsWith("data:image/jpeg;base64,") ||
+      input.logo.startsWith("data:image/jpg;base64,"))
+  ) {
     const logoUrl = await uploadLogo({
       logo: await resizeBase64Image(input.logo),
       teamId: createdTeam.id,

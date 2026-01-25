@@ -5,9 +5,10 @@ import { revalidateAvailabilityList } from "app/(use-page-wrapper)/(main-nav)/av
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import { useCallback, useState } from "react";
+import posthog from "posthog-js";
 
-import { BulkEditDefaultForEventsModal } from "@calcom/features/eventtypes/components/BulkEditDefaultForEventsModal";
-import type { BulkUpdatParams } from "@calcom/features/eventtypes/components/BulkEditDefaultForEventsModal";
+import { BulkEditDefaultForEventsModal } from "@calcom/web/modules/event-types/components/BulkEditDefaultForEventsModal";
+import type { BulkUpdatParams } from "@calcom/web/modules/event-types/components/BulkEditDefaultForEventsModal";
 import { NewScheduleButton } from "@calcom/features/schedules/components/NewScheduleButton";
 import { ScheduleListItem } from "@calcom/features/schedules/components/ScheduleListItem";
 import { useCompatSearchParams } from "@calcom/lib/hooks/useCompatSearchParams";
@@ -15,19 +16,20 @@ import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { HttpError } from "@calcom/lib/http-error";
 import type { RouterOutputs } from "@calcom/trpc/react";
 import { trpc } from "@calcom/trpc/react";
+import useMeQuery from "@calcom/trpc/react/hooks/useMeQuery";
 import { EmptyScreen } from "@calcom/ui/components/empty-screen";
 import { ToggleGroup } from "@calcom/ui/components/form";
 import { showToast } from "@calcom/ui/components/toast";
 
 type AvailabilityListProps = {
-  me: RouterOutputs["viewer"]["me"]["get"];
   availabilities: RouterOutputs["viewer"]["availability"]["list"];
 };
-export function AvailabilityList({ availabilities, me }: AvailabilityListProps) {
+export function AvailabilityList({ availabilities }: AvailabilityListProps) {
   const { t } = useLocale();
   const [bulkUpdateModal, setBulkUpdateModal] = useState(false);
   const utils = trpc.useUtils();
   const router = useRouter();
+  const { data: user } = useMeQuery();
 
   const deleteMutation = trpc.viewer.availability.schedule.delete.useMutation({
     onMutate: async ({ scheduleId }) => {
@@ -94,7 +96,7 @@ export function AvailabilityList({ availabilities, me }: AvailabilityListProps) 
         onSuccess: () => {
           utils.viewer.availability.list.invalidate();
           revalidateAvailabilityList();
-          showToast(t("success"), "success");
+          showToast(t("bulk_updated_schedule_successfully"), "success");
           callback();
         },
       }
@@ -140,10 +142,11 @@ export function AvailabilityList({ availabilities, me }: AvailabilityListProps) 
             <ul className="divide-subtle divide-y" data-testid="schedules" ref={animationParentRef}>
               {availabilities.schedules.map((schedule) => (
                 <ScheduleListItem
+                  redirectUrl={`/availability/${schedule.id}`}
                   displayOptions={{
-                    hour12: me?.timeFormat ? me.timeFormat === 12 : undefined,
-                    timeZone: me?.timeZone,
-                    weekStart: me?.weekStart || "Sunday",
+                    hour12: user?.timeFormat ? user.timeFormat === 12 : undefined,
+                    timeZone: user?.timeZone,
+                    weekStart: user?.weekStart || "Sunday",
                   }}
                   key={schedule.id}
                   schedule={schedule}
@@ -155,7 +158,7 @@ export function AvailabilityList({ availabilities, me }: AvailabilityListProps) 
               ))}
             </ul>
           </div>
-          <div className="text-default mb-16 mt-4 hidden text-center text-sm md:block">
+          <div className="text-default mb-16 mt-4 block text-center text-sm">
             {t("temporarily_out_of_office")}{" "}
             <Link href="settings/my-account/out-of-office" className="underline">
               {t("add_a_redirect")}
@@ -180,15 +183,18 @@ export function AvailabilityList({ availabilities, me }: AvailabilityListProps) 
 }
 
 type AvailabilityCTAProps = {
-  toggleGroupOptions: {
-    value: string;
-    label: string;
-  }[];
+  canViewTeamAvailability: boolean;
 };
-export const AvailabilityCTA = ({ toggleGroupOptions }: AvailabilityCTAProps) => {
+export const AvailabilityCTA = ({ canViewTeamAvailability }: AvailabilityCTAProps) => {
   const searchParams = useCompatSearchParams();
   const router = useRouter();
   const pathname = usePathname();
+  const { t } = useLocale();
+
+  const toggleGroupOptions = [
+    { value: "mine", label: t("my_availability") },
+    ...(canViewTeamAvailability ? [{ value: "team", label: t("team_availability"), onClick: () => { posthog.capture("team_availability_toggle_clicked") } }] : []),
+  ]
 
   // Get a new searchParams string by merging the current
   // searchParams with a provided key/value pair

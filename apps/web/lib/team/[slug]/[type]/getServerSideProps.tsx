@@ -7,14 +7,16 @@ import { getBookingForReschedule } from "@calcom/features/bookings/lib/get-booki
 import { getSlugOrRequestedSlug, orgDomainConfig } from "@calcom/features/ee/organizations/lib/orgDomains";
 import { getOrganizationSEOSettings } from "@calcom/features/ee/organizations/lib/orgSettings";
 import { FeaturesRepository } from "@calcom/features/flags/features.repository";
+import { getBrandingForEventType } from "@calcom/features/profile/lib/getBranding";
+import { shouldHideBrandingForTeamEvent } from "@calcom/features/profile/lib/hideBranding";
 import { getPlaceholderAvatar } from "@calcom/lib/defaultAvatarImage";
 import slugify from "@calcom/lib/slugify";
-import prisma from "@calcom/prisma";
+import { prisma } from "@calcom/prisma";
 import type { User } from "@calcom/prisma/client";
-import { BookingStatus, RedirectType } from "@calcom/prisma/client";
+import { BookingStatus, RedirectType, SchedulingType } from "@calcom/prisma/enums";
 import { EventTypeMetaDataSchema } from "@calcom/prisma/zod-utils";
 
-import { getTemporaryOrgRedirect } from "@lib/getTemporaryOrgRedirect";
+import { handleOrgRedirect } from "@lib/handleOrgRedirect";
 
 const paramsSchema = z.object({
   type: z.string().transform((s) => slugify(s)),
@@ -29,22 +31,20 @@ export const getServerSideProps = async (context: GetServerSidePropsContext) => 
   const { req, params, query } = context;
   const session = await getServerSession({ req });
   const { slug: teamSlug, type: meetingSlug } = paramsSchema.parse(params);
-  const { rescheduleUid, isInstantMeeting: queryIsInstantMeeting, email } = query;
+  const { rescheduleUid, isInstantMeeting: queryIsInstantMeeting } = query;
   const allowRescheduleForCancelledBooking = query.allowRescheduleForCancelledBooking === "true";
   const { currentOrgDomain, isValidOrgDomain } = orgDomainConfig(req, params?.orgSlug);
-  const isOrgContext = currentOrgDomain && isValidOrgDomain;
 
-  if (!isOrgContext) {
-    const redirect = await getTemporaryOrgRedirect({
-      slugs: teamSlug,
-      redirectType: RedirectType.Team,
-      eventTypeSlug: meetingSlug,
-      currentQuery: context.query,
-    });
+  const redirect = await handleOrgRedirect({
+    slugs: [teamSlug],
+    redirectType: RedirectType.Team,
+    eventTypeSlug: meetingSlug,
+    context,
+    currentOrgDomain: isValidOrgDomain ? currentOrgDomain : null,
+  });
 
-    if (redirect) {
-      return redirect;
-    }
+  if (redirect) {
+    return redirect;
   }
 
   const team = await getTeamWithEventsData(teamSlug, meetingSlug, isValidOrgDomain, currentOrgDomain);
@@ -54,6 +54,10 @@ export const getServerSideProps = async (context: GetServerSidePropsContext) => 
   }
 
   const eventData = team.eventTypes[0];
+
+  if (eventData.schedulingType === SchedulingType.MANAGED) {
+    return { notFound: true } as const;
+  }
 
   if (rescheduleUid && eventData.disableRescheduling) {
     return { redirect: { destination: `/booking/${rescheduleUid}`, permanent: false } };
@@ -71,7 +75,11 @@ export const getServerSideProps = async (context: GetServerSidePropsContext) => 
   let booking: GetBookingType | null = null;
   if (rescheduleUid) {
     booking = await getBookingForReschedule(`${rescheduleUid}`, session?.user?.id);
-    if (booking?.status === BookingStatus.CANCELLED && !allowRescheduleForCancelledBooking) {
+    if (
+      booking?.status === BookingStatus.CANCELLED &&
+      !allowRescheduleForCancelledBooking &&
+      !eventData.allowReschedulingCancelledBookings
+    ) {
       return {
         redirect: {
           permanent: false,
@@ -87,6 +95,7 @@ export const getServerSideProps = async (context: GetServerSidePropsContext) => 
   const crmContactOwnerEmail = query["cal.crmContactOwnerEmail"];
   const crmContactOwnerRecordType = query["cal.crmContactOwnerRecordType"];
   const crmAppSlugParam = query["cal.crmAppSlug"];
+  const crmRecordIdParam = query["cal.crmRecordId"];
 
   // Handle string[] type from query params
   let teamMemberEmail = Array.isArray(crmContactOwnerEmail) ? crmContactOwnerEmail[0] : crmContactOwnerEmail;
@@ -96,15 +105,17 @@ export const getServerSideProps = async (context: GetServerSidePropsContext) => 
     : crmContactOwnerRecordType;
 
   let crmAppSlug = Array.isArray(crmAppSlugParam) ? crmAppSlugParam[0] : crmAppSlugParam;
+  let crmRecordId = Array.isArray(crmRecordIdParam) ? crmRecordIdParam[0] : crmRecordIdParam;
 
   if (!teamMemberEmail || !crmOwnerRecordType || !crmAppSlug) {
     const { getTeamMemberEmailForResponseOrContactUsingUrlQuery } = await import(
-      "@calcom/lib/server/getTeamMemberEmailFromCrm"
+      "@calcom/features/ee/teams/lib/getTeamMemberEmailFromCrm"
     );
     const {
       email,
       recordType,
       crmAppSlug: crmAppSlugQuery,
+      recordId,
     } = await getTeamMemberEmailForResponseOrContactUsingUrlQuery({
       query,
       eventData,
@@ -113,14 +124,23 @@ export const getServerSideProps = async (context: GetServerSidePropsContext) => 
     teamMemberEmail = email ?? undefined;
     crmOwnerRecordType = recordType ?? undefined;
     crmAppSlug = crmAppSlugQuery ?? undefined;
+    crmRecordId = recordId ?? undefined;
   }
 
   const organizationSettings = getOrganizationSEOSettings(team);
   const allowSEOIndexing = organizationSettings?.allowSEOIndexing ?? false;
 
-  const featureRepo = new FeaturesRepository();
+  const featureRepo = new FeaturesRepository(prisma);
   const teamHasApiV2Route = await featureRepo.checkIfTeamHasFeature(team.id, "use-api-v2-for-team-slots");
   const useApiV2 = teamHasApiV2Route && hasApiV2RouteInEnv();
+
+  const branding = getBrandingForEventType({
+    eventType: {
+      team: team.parent ?? team,
+      users: [],
+      profile: null,
+    },
+  });
 
   return {
     props: {
@@ -142,6 +162,7 @@ export const getServerSideProps = async (context: GetServerSidePropsContext) => 
             : getPlaceholderAvatar(team.logoUrl, team.name),
           name,
           username: orgSlug ?? null,
+          ...branding,
         },
         title: eventData.title,
         users: eventHostsUserData,
@@ -152,13 +173,17 @@ export const getServerSideProps = async (context: GetServerSidePropsContext) => 
       user: teamSlug,
       teamId: team.id,
       slug: meetingSlug,
-      isBrandingHidden: team?.hideBranding,
+      isBrandingHidden: shouldHideBrandingForTeamEvent({
+        eventTypeId: eventData.id,
+        team,
+      }),
       isInstantMeeting: eventData && queryIsInstantMeeting ? true : false,
       themeBasis: null,
       orgBannerUrl: team.parent?.bannerUrl ?? "",
       teamMemberEmail,
       crmOwnerRecordType,
       crmAppSlug,
+      crmRecordId,
       isSEOIndexable: allowSEOIndexing,
     },
   };
@@ -188,6 +213,10 @@ const getTeamWithEventsData = async (
           name: true,
           bannerUrl: true,
           logoUrl: true,
+          hideBranding: true,
+          brandColor: true,
+          darkBrandColor: true,
+          theme: true,
           organizationSettings: {
             select: {
               allowSEOIndexing: true,
@@ -198,6 +227,9 @@ const getTeamWithEventsData = async (
       logoUrl: true,
       name: true,
       slug: true,
+      brandColor: true,
+      darkBrandColor: true,
+      theme: true,
       eventTypes: {
         where: {
           slug: meetingSlug,
@@ -212,6 +244,7 @@ const getTeamWithEventsData = async (
           hidden: true,
           disableCancelling: true,
           disableRescheduling: true,
+          allowReschedulingCancelledBookings: true,
           interfaceLanguage: true,
           hosts: {
             take: 3,

@@ -1,11 +1,18 @@
 import dayjs from "@calcom/dayjs";
 import prisma from "@calcom/prisma";
-import type { EventType, User, WorkflowReminder, WorkflowStep } from "@calcom/prisma/client";
-import { Prisma } from "@calcom/prisma/client";
+import type { EventType, Prisma, User, WorkflowReminder, WorkflowStep } from "@calcom/prisma/client";
 import { WorkflowMethods } from "@calcom/prisma/enums";
 
 type PartialWorkflowStep =
-  | (Partial<WorkflowStep> & { workflow: { userId?: number; teamId?: number } })
+  | (Partial<WorkflowStep> & {
+      workflow: {
+        userId?: number;
+        teamId?: number;
+        team?: {
+          isOrganization: boolean;
+        } | null;
+      };
+    })
   | null;
 
 type Booking = Prisma.BookingGetPayload<{
@@ -44,7 +51,7 @@ type PartialBooking =
 
 export type PartialWorkflowReminder = Pick<
   WorkflowReminder,
-  "id" | "isMandatoryReminder" | "scheduledDate" | "uuid"
+  "id" | "isMandatoryReminder" | "scheduledDate" | "uuid" | "seatReferenceId"
 > & {
   booking: PartialBooking | null;
 } & { workflowStep: PartialWorkflowStep };
@@ -70,7 +77,8 @@ async function getWorkflowReminders<T extends Prisma.WorkflowReminderSelect>(
     }
 
     filteredWorkflowReminders.push(
-      ...(newFilteredWorkflowReminders as Array<Prisma.WorkflowReminderGetPayload<{ select: T }>>)
+      // FIXME: This is a workaround to avoid type errors
+      ...(newFilteredWorkflowReminders as unknown as Array<Prisma.WorkflowReminderGetPayload<{ select: T }>>)
     );
     pageNumber++;
   }
@@ -92,10 +100,10 @@ export async function getAllRemindersToDelete(): Promise<RemindersToDeleteType[]
     },
   };
 
-  const select = Prisma.validator<Prisma.WorkflowReminderSelect>()({
+  const select = {
     referenceId: true,
     id: true,
-  });
+  } satisfies Prisma.WorkflowReminderSelect;
 
   const remindersToDelete = await getWorkflowReminders(whereFilter, select);
 
@@ -113,21 +121,22 @@ export async function getAllRemindersToCancel(): Promise<RemindersToCancelType[]
     },
   };
 
-  const select = Prisma.validator<Prisma.WorkflowReminderSelect>()({
+  const select = {
     referenceId: true,
     id: true,
-  });
+  } satisfies Prisma.WorkflowReminderSelect;
 
   const remindersToCancel = await getWorkflowReminders(whereFilter, select);
 
   return remindersToCancel;
 }
 
-export const select = Prisma.validator<Prisma.WorkflowReminderSelect>()({
+export const select = {
   id: true,
   scheduledDate: true,
   isMandatoryReminder: true,
   uuid: true,
+  seatReferenceId: true,
   workflowStep: {
     select: {
       action: true,
@@ -141,6 +150,11 @@ export const select = Prisma.validator<Prisma.WorkflowReminderSelect>()({
         select: {
           userId: true,
           teamId: true,
+          team: {
+            select: {
+              isOrganization: true,
+            },
+          },
         },
       },
     },
@@ -200,14 +214,18 @@ export const select = Prisma.validator<Prisma.WorkflowReminderSelect>()({
       },
     },
   },
-});
+} satisfies Prisma.WorkflowReminderSelect;
 
 export async function getAllUnscheduledReminders(): Promise<PartialWorkflowReminder[]> {
   const whereFilter: Prisma.WorkflowReminderWhereInput = {
     method: WorkflowMethods.EMAIL,
     scheduled: false,
     scheduledDate: {
+      gte: new Date(),
       lte: dayjs().add(2, "hour").toISOString(),
+    },
+    retryCount: {
+      lt: 3, // Don't continue retrying if it's already failed 3 times
     },
     OR: [{ cancelled: false }, { cancelled: null }],
   };
@@ -215,4 +233,36 @@ export async function getAllUnscheduledReminders(): Promise<PartialWorkflowRemin
   const unscheduledReminders = (await getWorkflowReminders(whereFilter, select)) as PartialWorkflowReminder[];
 
   return unscheduledReminders;
+}
+
+export function getWorkflowRecipientEmail({
+  action,
+  organizerEmail,
+  attendeeEmail,
+  sendToEmail,
+}: {
+  action: string;
+  organizerEmail?: string;
+  attendeeEmail?: string;
+  sendToEmail?: string | null;
+}): string | null {
+  // const action = reminder.workflowStep.action;
+
+  switch (action) {
+    case "EMAIL_ADDRESS":
+      return sendToEmail || null;
+    case "EMAIL_HOST":
+      return organizerEmail || null;
+    case "EMAIL_ATTENDEE":
+      return attendeeEmail || null;
+    case "SMS_ATTENDEE":
+      return attendeeEmail || null;
+    case "WHATSAPP_ATTENDEE":
+      return attendeeEmail || null;
+    case "SMS_NUMBER":
+    case "WHATSAPP_NUMBER":
+      return null;
+    default:
+      return null;
+  }
 }

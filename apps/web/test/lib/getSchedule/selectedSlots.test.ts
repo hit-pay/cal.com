@@ -3,16 +3,17 @@ import {
   createBookingScenario,
   Timezones,
   TestData,
+  mockCalendarToHaveNoBusySlots,
   type ScenarioData,
-} from "../../utils/bookingScenario/bookingScenario";
+} from "@calcom/testing/lib/bookingScenario/bookingScenario";
 
-import type { IncomingMessage } from "http";
+import type { IncomingMessage } from "node:http";
 import { describe, test, beforeEach, vi } from "vitest";
 import type { z } from "zod";
 
+import { getAvailableSlotsService } from "@calcom/features/di/containers/AvailableSlots";
 import { prisma } from "@calcom/prisma";
 import type { getScheduleSchema, GetScheduleOptions } from "@calcom/trpc/server/routers/viewer/slots/types";
-import { getAvailableSlots as getSchedule } from "@calcom/trpc/server/routers/viewer/slots/util";
 
 import { expect } from "./expects";
 import { setupAndTeardown } from "./setupAndTeardown";
@@ -62,6 +63,7 @@ const getBaseScenarioData = (): ScheduleScenario => ({
 });
 
 describe("getSchedule", () => {
+  const availableSlotsService = getAvailableSlotsService();
   setupAndTeardown();
 
   describe("Reserved Slots", () => {
@@ -93,7 +95,9 @@ describe("getSchedule", () => {
 
       await createBookingScenario(scenarioData);
 
-      const schedule = await getSchedule({
+      await mockCalendarToHaveNoBusySlots("googlecalendar");
+
+      const schedule = await availableSlotsService.getAvailableSlots({
         input: getTestScheduleInput({ yesterdayDateString, plus5DateString }),
       });
 
@@ -128,7 +132,9 @@ describe("getSchedule", () => {
 
       await createBookingScenario(scenarioData);
 
-      const schedule = await getSchedule({
+      await mockCalendarToHaveNoBusySlots("googlecalendar");
+
+      const schedule = await availableSlotsService.getAvailableSlots({
         input: getTestScheduleInput({ yesterdayDateString, plus5DateString }),
         ctx: {
           req: {
@@ -183,7 +189,9 @@ describe("getSchedule", () => {
 
       await createBookingScenario(scenarioData);
 
-      const schedule = await getSchedule({
+      await mockCalendarToHaveNoBusySlots("googlecalendar");
+
+      const schedule = await availableSlotsService.getAvailableSlots({
         input: getTestScheduleInput({ yesterdayDateString, plus5DateString }),
       });
 
@@ -238,7 +246,9 @@ describe("getSchedule", () => {
 
       await createBookingScenario(scenarioData);
 
-      const schedule = await getSchedule({
+      await mockCalendarToHaveNoBusySlots("googlecalendar");
+
+      const schedule = await availableSlotsService.getAvailableSlots({
         input: getTestScheduleInput({ yesterdayDateString, plus5DateString }),
       });
 
@@ -287,7 +297,9 @@ describe("getSchedule", () => {
 
       await createBookingScenario(scenarioData);
 
-      const schedule = await getSchedule({
+      await mockCalendarToHaveNoBusySlots("googlecalendar");
+
+      const schedule = await availableSlotsService.getAvailableSlots({
         input: getTestScheduleInput({ yesterdayDateString, plus5DateString }),
       });
 
@@ -366,7 +378,7 @@ describe("getSchedule", () => {
 
       await createBookingScenario(scenarioData);
 
-      await getSchedule({
+      await availableSlotsService.getAvailableSlots({
         input: getTestScheduleInput({ yesterdayDateString, plus5DateString }),
         ctx: {
           req: {

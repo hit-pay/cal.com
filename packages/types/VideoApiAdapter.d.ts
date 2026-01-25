@@ -2,6 +2,7 @@ import type {
   TSubmitBatchProcessorJobRes,
   batchProcessorBody,
   TGetTranscriptAccessLink,
+  TGetMeetingInformationResponsesSchema,
 } from "@calcom/app-store/dailyvideo/zod";
 import type { GetRecordingsResponseSchema, GetAccessLinkResponseSchema } from "@calcom/prisma/zod-utils";
 
@@ -43,6 +44,8 @@ export type VideoApiAdapter =
       ): Promise<TGetTranscriptAccessLink["transcription"] | { message: string }>;
 
       checkIfRoomNameMatchesInRecording?(roomName: string, recordingId: string): Promise<boolean>;
+
+      getMeetingInformation?(roomName: string): Promise<TGetMeetingInformationResponsesSchema>;
     }
   | undefined;
 

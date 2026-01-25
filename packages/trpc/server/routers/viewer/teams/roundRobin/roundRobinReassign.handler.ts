@@ -1,5 +1,5 @@
+import { getBookingAccessService } from "@calcom/features/di/containers/BookingAccessService";
 import { roundRobinReassignment } from "@calcom/features/ee/round-robin/roundRobinReassignment";
-import { BookingRepository } from "@calcom/lib/server/repository/booking";
 import type { TrpcSessionUser } from "@calcom/trpc/server/types";
 
 import { TRPCError } from "@trpc/server";
@@ -17,7 +17,11 @@ export const roundRobinReassignHandler = async ({ ctx, input }: RoundRobinReassi
   const { bookingId } = input;
 
   // Check if user has access to change booking
-  const isAllowed = await BookingRepository.doesUserIdHaveAccessToBooking({ userId: ctx.user.id, bookingId });
+  const bookingAccessService = getBookingAccessService();
+  const isAllowed = await bookingAccessService.doesUserIdHaveAccessToBooking({
+    userId: ctx.user.id,
+    bookingId,
+  });
 
   if (!isAllowed) {
     throw new TRPCError({ code: "FORBIDDEN", message: "You do not have permission" });
@@ -27,6 +31,8 @@ export const roundRobinReassignHandler = async ({ ctx, input }: RoundRobinReassi
     bookingId,
     orgId: ctx.user.organizationId,
     reassignedById: ctx.user.id,
+    actionSource: "WEBAPP",
+    reassignedByUuid: ctx.user.uuid,
   });
 };
 

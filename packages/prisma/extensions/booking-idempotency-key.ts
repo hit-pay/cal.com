@@ -1,7 +1,24 @@
-import { Prisma } from "@prisma/client";
 import { v5 as uuidv5 } from "uuid";
 
-import { BookingStatus } from "@calcom/prisma/enums";
+import { Prisma } from "../client";
+import { BookingStatus } from "../enums";
+
+function generateIdempotencyKey({
+  startTime,
+  endTime,
+  userId,
+  reassignedById,
+}: {
+  startTime: Date | string;
+  endTime: Date | string;
+  userId?: number;
+  reassignedById?: number | null;
+}) {
+  return uuidv5(
+    `${startTime.valueOf()}.${endTime.valueOf()}.${userId}${reassignedById ? `.${reassignedById}` : ""}`,
+    uuidv5.URL
+  );
+}
 
 export function bookingIdempotencyKeyExtension() {
   return Prisma.defineExtension({
@@ -9,14 +26,12 @@ export function bookingIdempotencyKeyExtension() {
       booking: {
         async create({ args, query }) {
           if (args.data.status === BookingStatus.ACCEPTED) {
-            const idempotencyKey = uuidv5(
-              `${
-                args.data.eventType?.connect?.id
-              }.${args.data.startTime.valueOf()}.${args.data.endTime.valueOf()}.${
-                args.data?.user?.connect?.id
-              }`,
-              uuidv5.URL
-            );
+            const idempotencyKey = generateIdempotencyKey({
+              startTime: args.data.startTime,
+              endTime: args.data.endTime,
+              userId: args.data.user?.connect?.id,
+              reassignedById: args.data.reassignById,
+            });
             args.data.idempotencyKey = idempotencyKey;
           }
           return query(args);

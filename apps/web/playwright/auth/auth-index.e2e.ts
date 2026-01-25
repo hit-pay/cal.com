@@ -3,6 +3,8 @@ import { expect } from "@playwright/test";
 import { test } from "../lib/fixtures";
 import { submitAndWaitForResponse } from "../lib/testUtils";
 
+test.describe.configure({ mode: "parallel" });
+
 test.describe("Can signup from a team invite", async () => {
   test.beforeEach(async ({ users }) => {
     const proUser = await users.create();
@@ -22,6 +24,7 @@ test.describe("Can signup from a team invite", async () => {
       email: `${proUser.username}-member@example.com`,
     };
     await page.goto("/settings/teams/new");
+    await page.waitForLoadState("networkidle");
 
     // Create a new team
     await page.locator('input[name="name"]').fill(teamName);
